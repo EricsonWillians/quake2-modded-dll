@@ -100,14 +100,6 @@ using bit_t = std::conditional_t<n >= 32, uint64_t, uint32_t>;
 template<size_t n>
 constexpr bit_t<n> bit_v = 1ull << n;
 
-#if defined(KEX_Q2GAME_EXPORTS)
-    #define Q2GAME_API extern "C" __declspec( dllexport )
-#elif defined(KEX_Q2GAME_IMPORTS)
-    #define Q2GAME_API extern "C" __declspec( dllimport )
-#else
-    #define Q2GAME_API
-#endif
-
 // game.h -- game dll information visible to server
 // PARIL_NEW_API - value likely not used by any other Q2-esque engine in the wild
 constexpr int32_t GAME_API_VERSION = 2023;

@@ -21,6 +21,11 @@
 #include <numeric>
 #include <functional>
 
+#if defined(_WIN32) || defined(__MINGW32__) // MinGW cross-compile
+#define FMT_EXCEPTIONS 1
+#define FMT_NO_INT128 1
+#endif
+
 // format!
 #ifndef USE_CPP20_FORMAT
 #ifdef __cpp_lib_format

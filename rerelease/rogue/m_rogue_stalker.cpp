@@ -11,6 +11,7 @@ stalker
 #include "../g_local.h"
 #include "m_rogue_stalker.h"
 #include <float.h>
+#include <cmath>
 
 static cached_soundindex sound_pain;
 static cached_soundindex sound_die;
@@ -626,7 +627,7 @@ bool stalker_do_pounce(edict_t *self, const vec3_t &dest)
 	if (fabsf(jumpAngles[YAW] - self->s.angles[YAW]) > 45)
 		return false; // not facing the player...
 
-	if (isnan(jumpAngles[YAW]))
+	if (std::isinf(jumpAngles[YAW]))
 		return false; // Switch why
 
 	self->ideal_yaw = jumpAngles[YAW];

@@ -11,6 +11,7 @@
 #endif
 #include "json/json.h"
 #include "json/config.h"
+#include <cmath>
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
@@ -1535,7 +1536,7 @@ void read_save_type_json(const Json::Value &json, void *data, const save_type_t 
 	case ST_FLOAT:
 		if (!json.isDouble())
 			json_print_error(field, "expected number", false);
-		else if (isnan(json.asDouble()))
+		else if (std::isinf(json.asDouble()))
 			*((float *) data) = std::numeric_limits<float>::quiet_NaN();
 		else
 			*((float *) data) = json.asFloat();

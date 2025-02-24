@@ -3,6 +3,7 @@
 
 #include "cg_local.h"
 #include "m_flash.h"
+#include "q2game_api.h"
 
 cgame_import_t cgi;
 cgame_export_t cglobals;

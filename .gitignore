@@ -1,0 +1,49 @@
+# Build directories
+build/
+build-win/
+build-windows/
+
+# CMake-generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CMakeUserPresets.json
+
+# Compiled shared and static libraries
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.exp
+*.pdb
+
+# Object files
+*.o
+*.obj
+
+# Log files
+*.log
+
+# Backup files
+*.bak
+*~
+
+# Windows-specific
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.exe
+
+# macOS-specific
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Unix/Linux-specific
+*.swp
+*.swo

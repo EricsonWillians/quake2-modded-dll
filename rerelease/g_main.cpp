@@ -3,6 +3,7 @@
 
 #include "g_local.h"
 #include "bots/bot_includes.h"
+#include "q2game_api.h"
 
 CHECK_GCLIENT_INTEGRITY;
 CHECK_EDICT_INTEGRITY;

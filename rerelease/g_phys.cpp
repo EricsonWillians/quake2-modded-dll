@@ -3,6 +3,7 @@
 // g_phys.c
 
 #include "g_local.h"
+#include <cmath>
 
 /*
 
@@ -758,7 +759,7 @@ void SV_Physics_Step(edict_t *ent)
 		SV_AddRotationalFriction(ent);
 
 	// FIXME: figure out how or why this is happening
-	if (isnan(ent->velocity[0]) || isnan(ent->velocity[1]) || isnan(ent->velocity[2]))
+	if (std::isinf(ent->velocity[0]) || std::isinf(ent->velocity[1]) || std::isinf(ent->velocity[2]))
 		ent->velocity = {};
 
 	// add gravity except:

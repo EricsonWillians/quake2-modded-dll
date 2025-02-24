@@ -5,6 +5,9 @@
 #pragma once
 
 #include "bg_local.h"
+#include <fmt/core.h>
+#include "q_vec3.h" 
+#include "game.h" 
 
 // the "gameversion" client command will print this plus compile date
 constexpr const char *GAMEVERSION = "baseq2";
@@ -3528,25 +3531,43 @@ inline bool M_CheckGib(edict_t *self, const mod_t &mod)
 
 	return self->health <= self->gib_health;
 }
+#ifndef FMT_CUSTOM_VEC3_H
+#define FMT_CUSTOM_VEC3_H
+template <>
+struct fmt::formatter<edict_t> {
+    // Parse format specifications (if needed)
+    template <typename ParseContext>
+    constexpr auto parse(ParseContext &ctx) {
+        return ctx.begin();
+    }
 
-// Fmt support for entities
-template<>
-struct fmt::formatter<edict_t>
-{
-	template<typename ParseContext>
-	constexpr auto parse(ParseContext& ctx)
-	{
-		return ctx.begin();
-	}
-
-    template<typename FormatContext>
-    auto format(const edict_t &p, FormatContext &ctx) -> decltype(ctx.out())
-    {
-		if (p.linked)
-			return fmt::format_to(ctx.out(), FMT_STRING("{} @ {}"), p.classname, (p.absmax + p.absmin) * 0.5f);
-		return fmt::format_to(ctx.out(), FMT_STRING("{} @ {}"), p.classname, p.s.origin);
+    // Format an edict_t by printing, say, its classname and spawn_count.
+    template <typename FormatContext>
+    auto format(const edict_t &e, FormatContext &ctx) const {
+        return format_to(ctx.out(), "[edict: classname={}, spawn_count={}]", 
+                         e.classname ? e.classname : "null", e.spawn_count);
     }
 };
+template<>
+struct fmt::formatter<vec3_t>
+{
+    constexpr auto parse(fmt::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const vec3_t& v, FormatContext& ctx) const
+    {
+        return fmt::format_to(ctx.out(), "<{:.1f} {:.1f} {:.1f}>", 
+            static_cast<float>(v[0]), 
+            static_cast<float>(v[1]), 
+            static_cast<float>(v[2]));
+    }
+};
+
+#endif
+
 
 // POI tags used by this mod
 enum pois_t : uint16_t
