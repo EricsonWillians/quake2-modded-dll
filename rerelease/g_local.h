@@ -73,21 +73,16 @@ private:
 	template<typename T>
 	inline void loc_embed(T input, char* buffer, const char*& output)
 	{
-		if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>)
+		if constexpr (std::is_integral_v<T>)
 		{
 			auto result = std::to_chars(buffer, buffer + MAX_INFO_STRING - 1, input);
 			*result.ptr = '\0';
-			output = buffer;
-		}
-		else if constexpr (is_char_ptr_v<T>)
-		{
-			if (!input)
-				Com_Error("null const char ptr passed to loc");
-
-			output = input;
 		}
 		else
-			Com_Error("invalid loc argument");
+		{
+			std::snprintf(buffer, MAX_INFO_STRING, "%.2f", input);
+		}
+		output = buffer;
 	}
 
 	static std::array<char[MAX_INFO_STRING], MAX_LOCALIZATION_ARGS> buffers;
@@ -1989,7 +1984,17 @@ extern cvar_t *ai_model_scale;
 extern cvar_t *ai_allow_dm_spawn;
 extern cvar_t *ai_movement_disabled;
 
+// CUSTOM
+
+#ifndef clamp
+#define clampval(val, minVal, maxVal) ((val) < (minVal) ? (minVal) : ((val) > (maxVal) ? (maxVal) : (val)))
+#endif
+
 extern cvar_t *sv_thirdperson;
+extern cvar_t *tp_distance;
+extern cvar_t *tp_height;
+extern cvar_t *tp_side;
+extern cvar_t *tp_smooth;
 
 #define world (&g_edicts[0])
 

@@ -2,6 +2,7 @@
 // Licensed under the GNU General Public License 2.0.
 #include "g_local.h"
 #include "m_player.h"
+#include "game.h"
 
 void SelectNextItem(edict_t *ent, item_flags_t itflags, bool menu = true)
 {
@@ -1614,6 +1615,89 @@ void Cmd_ThirdPerson_f(edict_t *ent)
 }
 
 /*
+==================
+Cmd_TP_Distance_f
+
+Set third person distance
+==================
+*/
+void Cmd_TP_Distance_f(edict_t *ent)
+{
+    if (gi.argc() < 2) {
+        gi.LocClient_Print(ent, PRINT_HIGH, "Usage: tp_distance <value>\n");
+        return;
+    }
+
+    float value = atof(gi.argv(1));
+    if (value < 32.0f) value = 32.0f; // Prevent too close values
+    tp_distance->value = value;
+
+    gi.LocClient_Print(ent, PRINT_HIGH, "Third-person distance set to %.2f\n", value);
+}
+
+/*
+==================
+Cmd_TP_Height_f
+
+Set third person height
+==================
+*/
+void Cmd_TP_Height_f(edict_t *ent)
+{
+    if (gi.argc() < 2) {
+        gi.LocClient_Print(ent, PRINT_HIGH, "Usage: tp_height <value>\n");
+        return;
+    }
+
+    float value = atof(gi.argv(1));
+    tp_height->value = value;
+
+    gi.LocClient_Print(ent, PRINT_HIGH, "Third-person height set to %.2f\n", value);
+}
+
+/*
+==================
+Cmd_TP_Side_f
+
+Set third person side offset
+==================
+*/
+void Cmd_TP_Side_f(edict_t *ent)
+{
+    if (gi.argc() < 2) {
+        gi.LocClient_Print(ent, PRINT_HIGH, "Usage: tp_side <value>\n");
+        return;
+    }
+
+    float value = atof(gi.argv(1));
+    tp_side->value = value;
+
+    gi.LocClient_Print(ent, PRINT_HIGH, "Third-person side offset set to %.2f\n", value);
+}
+
+/*
+==================
+Cmd_TP_Smooth_f
+
+Set third person smoothing
+==================
+*/
+void Cmd_TP_Smooth_f(edict_t *ent)
+{
+    if (gi.argc() < 2) {
+       gi.LocClient_Print(ent, PRINT_HIGH, "$g_tp_smooth_usage");
+        return;
+    }
+
+    float value = atof(gi.argv(1));
+    value = clamp(value, 0.0f, 1.0f); // Enforce 0.0 to 1.0 range
+    //Use G_Fmt, and .c_str()
+	gi.cvar_set("tp_smooth", G_Fmt("%f", value).data());
+
+    gi.LocClient_Print(ent, PRINT_HIGH, "$g_tp_smooth_set", value);
+}
+
+/*
 =================
 ClientCommand
 =================
@@ -1739,6 +1823,12 @@ void ClientCommand(edict_t *ent)
 	// CUSTOM
 	else if (Q_strcasecmp(cmd, "thirdperson") == 0)
 		Cmd_ThirdPerson_f(ent);
+	else if (Q_strcasecmp(cmd, "tp_distance") == 0)
+		Cmd_TP_Distance_f(ent);
+	else if (Q_strcasecmp(cmd, "tp_height") == 0)
+		Cmd_TP_Height_f(ent);
+	else if (Q_strcasecmp(cmd, "tp_side") == 0)
+		Cmd_TP_Side_f(ent);
 	// ZOID
 	else if (Q_strcasecmp(cmd, "team") == 0)
 		CTFTeam_f(ent);

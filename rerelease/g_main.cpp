@@ -140,6 +140,10 @@ cvar_t *ai_allow_dm_spawn;
 cvar_t *ai_movement_disabled;
 
 cvar_t *sv_thirdperson;
+cvar_t *tp_distance;
+cvar_t *tp_height;
+cvar_t *tp_side;
+cvar_t *tp_smooth;
 
 static cvar_t *g_frames_per_frame;
 
@@ -362,6 +366,11 @@ void InitGame()
 	// Custom cvars
 
 	sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_NOFLAGS);
+	// Third-person camera variables
+	tp_distance = gi.cvar("tp_distance", "128", CVAR_ARCHIVE);
+	tp_height   = gi.cvar("tp_height", "48", CVAR_ARCHIVE);
+	tp_side     = gi.cvar("tp_side", "0", CVAR_ARCHIVE);
+	tp_smooth = gi.cvar("tp_smooth", "0.2", CVAR_ARCHIVE);
 
 	// items
 	InitItems();

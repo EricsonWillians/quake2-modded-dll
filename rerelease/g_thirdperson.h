@@ -1,10 +1,9 @@
-// Copyright (c) Ericson Willians.
-// Licensed under the GNU General Public License 2.0.
-
 #pragma once
-
 #include "g_local.h"
+void G_RegisterThirdpersonCVars();
+void G_SetThirdPersonView(edict_t* ent);
 
-// Third-person camera functions
-void G_SetThirdPersonView(edict_t *ent);
-void Cmd_ThirdPerson_f(edict_t *ent);
+extern cvar_t* sv_thirdperson; // Declare the cvar.
+
+// Make the command available
+static void G_Thirdperson_Command(edict_t* ent);
