@@ -1989,6 +1989,8 @@ extern cvar_t *ai_model_scale;
 extern cvar_t *ai_allow_dm_spawn;
 extern cvar_t *ai_movement_disabled;
 
+extern cvar_t *sv_thirdperson;
+
 #define world (&g_edicts[0])
 
 uint32_t GetUnicastKey();

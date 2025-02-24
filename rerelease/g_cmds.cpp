@@ -1590,6 +1590,30 @@ static void Cmd_ListMonsters_f(edict_t *ent)
 }
 
 /*
+==================
+Cmd_ThirdPerson_f
+
+Toggle third person camera on/off
+==================
+*/
+void Cmd_ThirdPerson_f(edict_t *ent)
+{
+    // Early checks
+    if (!ent || !ent->client)
+        return;
+    
+    // Get current value
+    int current_value = (int)sv_thirdperson->value;
+    
+    // Toggle value
+    gi.cvar_set("sv_thirdperson", current_value ? "0" : "1");
+    
+    // Show message to player
+    gi.LocClient_Print(ent, PRINT_HIGH, "Third person camera %s\n", 
+                     current_value ? "OFF" : "ON");
+}
+
+/*
 =================
 ClientCommand
 =================
@@ -1712,6 +1736,9 @@ void ClientCommand(edict_t *ent)
 		Cmd_Wave_f(ent);
 	else if (Q_strcasecmp(cmd, "playerlist") == 0)
 		Cmd_PlayerList_f(ent);
+	// CUSTOM
+	else if (Q_strcasecmp(cmd, "thirdperson") == 0)
+		Cmd_ThirdPerson_f(ent);
 	// ZOID
 	else if (Q_strcasecmp(cmd, "team") == 0)
 		CTFTeam_f(ent);

@@ -4,6 +4,10 @@
 #include "g_local.h"
 #include "m_player.h"
 #include "bots/bot_includes.h"
+#include <array>
+#include <cmath>
+#include <algorithm>
+#include "g_thirdperson.h"
 
 static edict_t   *current_player;
 static gclient_t *current_client;
@@ -1554,4 +1558,16 @@ void ClientEndServerFrame(edict_t *ent)
 		if (!clipped_player)
 			ent->clipmask |= CONTENTS_PLAYER;
 	}
+
+	// -----------------------------------------
+    // THIRD-PERSON TOGGLE
+    // -----------------------------------------
+	if (sv_thirdperson && sv_thirdperson->value != 0)
+	{
+		if (ent->health > 0 && !ent->client->resp.spectator)
+		{
+			G_SetThirdPersonView(ent);
+		}
+	}
+    // -----------------------------------------
 }

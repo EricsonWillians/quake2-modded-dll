@@ -5,6 +5,7 @@
 #include "bots/bot_includes.h"
 #include "q2game_api.h"
 
+
 CHECK_GCLIENT_INTEGRITY;
 CHECK_EDICT_INTEGRITY;
 
@@ -138,6 +139,8 @@ cvar_t *ai_model_scale;
 cvar_t *ai_allow_dm_spawn;
 cvar_t *ai_movement_disabled;
 
+cvar_t *sv_thirdperson;
+
 static cvar_t *g_frames_per_frame;
 
 void SpawnEntities(const char *mapname, const char *entities, const char *spawnpoint);
@@ -215,6 +218,8 @@ InitGame
 Called after PreInitGame when the game has set up cvars.
 ============
 */
+
+
 void InitGame()
 {
 	gi.Com_Print("==== InitGame ====\n");
@@ -269,6 +274,7 @@ void InitGame()
 
 	// latched vars
 	sv_cheats = gi.cvar("cheats",
+
 #if defined(_DEBUG)
         "1"
 #else
@@ -352,6 +358,10 @@ void InitGame()
 	g_map_list = gi.cvar("g_map_list", "", CVAR_NOFLAGS);
 	g_map_list_shuffle = gi.cvar("g_map_list_shuffle", "0", CVAR_NOFLAGS);
 	g_lag_compensation = gi.cvar("g_lag_compensation", "1", CVAR_NOFLAGS);
+
+	// Custom cvars
+
+	sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_NOFLAGS);
 
 	// items
 	InitItems();
