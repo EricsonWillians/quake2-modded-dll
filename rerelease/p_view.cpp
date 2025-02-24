@@ -19,6 +19,15 @@ float bobmove;
 int	  bobcycle, bobcycle_run;	  // odd cycles are right foot going forward
 float bobfracsin; // sinf(bobfrac*M_PI)
 
+// Helper: linear interpolation for vectors
+static inline vec3_t LerpVec(const vec3_t &a, const vec3_t &b, float t) {
+    vec3_t result;
+    result.x = a.x + (b.x - a.x) * t;
+    result.y = a.y + (b.y - a.y) * t;
+    result.z = a.z + (b.z - a.z) * t;
+    return result;
+}
+
 /*
 ===============
 SkipViewModifiers
@@ -298,180 +307,36 @@ Auto pitching on slopes?
 
 ===============
 */
-void SV_CalcViewOffset(edict_t *ent)
-{
-	float  bob;
-	float  ratio;
-	float  delta;
-	vec3_t v;
+void SV_CalcViewOffset(edict_t *ent) {
+    if (sv_thirdperson && sv_thirdperson->integer &&
+        ent->health > 0 && !ent->client->resp.spectator) {
+        // Third-person camera is processed in G_SetThirdPersonView;
+        // skip first-person view offset modifications.
+        return;
+    }
+    
+    // --- First-Person View Offset Calculations ---
+    vec3_t baseOffset = { 0, 0, 0 };
 
-	//===================================
+    // Calculate bobbing offset (with a maximum limit)
+    float bob = bobfracsin * xyspeed * bob_up->value;
+    bob = std::min(bob, 6.0f);
+    baseOffset[2] += bob;
 
-	// base angles
-	vec3_t &angles = ent->client->ps.kick_angles;
+    // Add kick offset (damage/fall kicks)
+    // (Assuming P_CurrentKickOrigin returns a vec3_t representing kick offsets)
+    vec3_t kickOffset = P_CurrentKickOrigin(ent);
+    baseOffset.x += kickOffset.x;
+    baseOffset.y += kickOffset.y;
+    baseOffset.z += kickOffset.z;
+    
+    // Clamp the final offset so the view never leaves the player bounds
+    baseOffset[0] = std::clamp(baseOffset[0], -14.0f, 14.0f);
+    baseOffset[1] = std::clamp(baseOffset[1], -14.0f, 14.0f);
+    baseOffset[2] = std::clamp(baseOffset[2], -22.0f, 30.0f);
 
-	// if dead, fix the angle and don't add any kick
-	if (ent->deadflag && !ent->client->resp.spectator)
-	{
-		angles = {};
-
-		if (ent->flags & FL_SAM_RAIMI)
-		{
-			ent->client->ps.viewangles[ROLL] = 0;
-			ent->client->ps.viewangles[PITCH] = 0;
-		}
-		else
-		{
-			ent->client->ps.viewangles[ROLL] = 40;
-			ent->client->ps.viewangles[PITCH] = -15;
-		}
-		ent->client->ps.viewangles[YAW] = ent->client->killer_yaw;
-	}
-	else if (!ent->client->pers.bob_skip && !SkipViewModifiers())
-	{
-		// add angles based on weapon kick
-		angles = P_CurrentKickAngles(ent);
-
-		// add angles based on damage kick
-		if (ent->client->v_dmg_time > level.time)
-		{
-			// [Paril-KEX] 100ms of slack is added to account for
-			// visual difference in higher tickrates
-			gtime_t diff = ent->client->v_dmg_time - level.time;
-
-			// slack time remaining
-			if (DAMAGE_TIME_SLACK())
-			{
-				if (diff > DAMAGE_TIME() - DAMAGE_TIME_SLACK())
-					ratio = (DAMAGE_TIME() - diff).seconds() / DAMAGE_TIME_SLACK().seconds();
-				else
-					ratio = diff.seconds() / (DAMAGE_TIME() - DAMAGE_TIME_SLACK()).seconds();
-			}
-			else
-				ratio = diff.seconds() / (DAMAGE_TIME() - DAMAGE_TIME_SLACK()).seconds();
-
-			angles[PITCH] += ratio * ent->client->v_dmg_pitch;
-			angles[ROLL] += ratio * ent->client->v_dmg_roll;
-		}
-
-		// add pitch based on fall kick
-		if (ent->client->fall_time > level.time)
-		{
-			// [Paril-KEX] 100ms of slack is added to account for
-			// visual difference in higher tickrates
-			gtime_t diff = ent->client->fall_time - level.time;
-
-			// slack time remaining
-			if (DAMAGE_TIME_SLACK())
-			{
-				if (diff > FALL_TIME() - DAMAGE_TIME_SLACK())
-					ratio = (FALL_TIME() - diff).seconds() / DAMAGE_TIME_SLACK().seconds();
-				else
-					ratio = diff.seconds() / (FALL_TIME() - DAMAGE_TIME_SLACK()).seconds();
-			}
-			else
-				ratio = diff.seconds() / (FALL_TIME() - DAMAGE_TIME_SLACK()).seconds();
-			angles[PITCH] += ratio * ent->client->fall_value;
-		}
-
-		// add angles based on velocity
-		if (!ent->client->pers.bob_skip && !SkipViewModifiers())
-		{
-			delta = ent->velocity.dot(forward);
-			angles[PITCH] += delta * run_pitch->value;
-
-			delta = ent->velocity.dot(right);
-			angles[ROLL] += delta * run_roll->value;
-
-			// add angles based on bob
-			delta = bobfracsin * bob_pitch->value * xyspeed;
-			if ((ent->client->ps.pmove.pm_flags & PMF_DUCKED) && ent->groundentity)
-				delta *= 6; // crouching
-			delta = min(delta, 1.2f);
-			angles[PITCH] += delta;
-			delta = bobfracsin * bob_roll->value * xyspeed;
-			if ((ent->client->ps.pmove.pm_flags & PMF_DUCKED) && ent->groundentity)
-				delta *= 6; // crouching
-			delta = min(delta, 1.2f);
-			if (bobcycle & 1)
-				delta = -delta;
-			angles[ROLL] += delta;
-		}
-
-		// add earthquake angles
-		if (ent->client->quake_time > level.time)
-		{
-			float factor = min(1.0f, (ent->client->quake_time.seconds() / level.time.seconds()) * 0.25f);
-
-			angles.x += crandom_open() * factor;
-			angles.z += crandom_open() * factor;
-			angles.y += crandom_open() * factor;
-		}
-	}
-
-	// [Paril-KEX] clamp angles
-	for (int i = 0; i < 3; i++)
-		angles[i] = clamp(angles[i], -31.f, 31.f);
-
-	//===================================
-
-	// base origin
-
-	v = {};
-
-	// add fall height
-
-	if (!ent->client->pers.bob_skip && !SkipViewModifiers())
-	{
-		if (ent->client->fall_time > level.time)
-		{
-			// [Paril-KEX] 100ms of slack is added to account for
-			// visual difference in higher tickrates
-			gtime_t diff = ent->client->fall_time - level.time;
-
-			// slack time remaining
-			if (DAMAGE_TIME_SLACK())
-			{
-				if (diff > FALL_TIME() - DAMAGE_TIME_SLACK())
-					ratio = (FALL_TIME() - diff).seconds() / DAMAGE_TIME_SLACK().seconds();
-				else
-					ratio = diff.seconds() / (FALL_TIME() - DAMAGE_TIME_SLACK()).seconds();
-			}
-			else
-				ratio = diff.seconds() / (FALL_TIME() - DAMAGE_TIME_SLACK()).seconds();
-			v[2] -= ratio * ent->client->fall_value * 0.4f;
-		}
-
-	// add bob height
-		bob = bobfracsin * xyspeed * bob_up->value;
-		if (bob > 6)
-			bob = 6;
-		// gi.DebugGraph (bob *2, 255);
-		v[2] += bob;
-	}
-
-	// add kick offset
-
-	if (!ent->client->pers.bob_skip && !SkipViewModifiers())
-		v += P_CurrentKickOrigin(ent);
-
-	// absolutely bound offsets
-	// so the view can never be outside the player box
-
-	if (v[0] < -14)
-		v[0] = -14;
-	else if (v[0] > 14)
-		v[0] = 14;
-	if (v[1] < -14)
-		v[1] = -14;
-	else if (v[1] > 14)
-		v[1] = 14;
-	if (v[2] < -22)
-		v[2] = -22;
-	else if (v[2] > 30)
-		v[2] = 30;
-
-	ent->client->ps.viewoffset = v;
+    // Optionally, smooth the transition from the previous frame’s offset
+    ent->client->ps.viewoffset = LerpVec(ent->client->ps.viewoffset, baseOffset, 0.5f);
 }
 
 /*
@@ -481,84 +346,97 @@ SV_CalcGunOffset
 */
 void SV_CalcGunOffset(edict_t *ent)
 {
-	int	  i;
-	// ROGUE
+    int i;
 
-	// ROGUE - heatbeam shouldn't bob so the beam looks right
-	if (ent->client->pers.weapon && 
-		!((ent->client->pers.weapon->id == IT_WEAPON_PLASMABEAM || ent->client->pers.weapon->id == IT_WEAPON_GRAPPLE) && ent->client->weaponstate == WEAPON_FIRING)
-		&& !SkipViewModifiers())
-	{
-		// ROGUE
-		// gun angles from bobbing
-		ent->client->ps.gunangles[ROLL] = xyspeed * bobfracsin * 0.005f;
-		ent->client->ps.gunangles[YAW] = xyspeed * bobfracsin * 0.01f;
-		if (bobcycle & 1)
-		{
-			ent->client->ps.gunangles[ROLL] = -ent->client->ps.gunangles[ROLL];
-			ent->client->ps.gunangles[YAW] = -ent->client->ps.gunangles[YAW];
-		}
+    // --- Third-Person Mode Check ---
+    // If third-person mode is active, hide the weapon model and reset gun offsets.
+    if (sv_thirdperson && sv_thirdperson->integer &&
+        ent->health > 0 && !ent->client->resp.spectator)
+    {
+        ent->client->ps.gunindex = 0;  // Hide weapon
+        for (i = 0; i < 3; i++)
+            ent->client->ps.gunoffset[i] = 0;
+        return;
+    }
 
-		ent->client->ps.gunangles[PITCH] = xyspeed * bobfracsin * 0.005f;
+    // --- First-Person Gun Offset Processing ---
+    // Check if we have a valid weapon that isn’t one of the exceptions (e.g., plasma beam or grapple while firing)
+    // and if view modifiers (like bobbing) should be applied.
+    if (ent->client->pers.weapon &&
+        !((ent->client->pers.weapon->id == IT_WEAPON_PLASMABEAM ||
+           ent->client->pers.weapon->id == IT_WEAPON_GRAPPLE) &&
+          ent->client->weaponstate == WEAPON_FIRING) &&
+        !SkipViewModifiers())
+    {
+        // Gun angles derived from bobbing.
+        ent->client->ps.gunangles[ROLL] = xyspeed * bobfracsin * 0.005f;
+        ent->client->ps.gunangles[YAW]  = xyspeed * bobfracsin * 0.01f;
+        if (bobcycle & 1)
+        {
+            ent->client->ps.gunangles[ROLL] = -ent->client->ps.gunangles[ROLL];
+            ent->client->ps.gunangles[YAW]  = -ent->client->ps.gunangles[YAW];
+        }
+        ent->client->ps.gunangles[PITCH] = xyspeed * bobfracsin * 0.005f;
 
-		vec3_t viewangles_delta = ent->client->oldviewangles - ent->client->ps.viewangles;
-		
-		for (i = 0; i < 3; i++)
-			ent->client->slow_view_angles[i] += viewangles_delta[i];
+        // Compute the change in view angles between the current and previous frames.
+        vec3_t viewangles_delta = ent->client->oldviewangles - ent->client->ps.viewangles;
 
-		// gun angles from delta movement
-		for (i = 0; i < 3; i++)
-		{
-			float &d = ent->client->slow_view_angles[i];
+        // Accumulate delta into a slower-adjusting vector (for smoother transitions).
+        for (i = 0; i < 3; i++)
+            ent->client->slow_view_angles[i] += viewangles_delta[i];
 
-			if (!d)
-				continue;
+        // Adjust gun angles based on the accumulated slow view angles.
+        for (i = 0; i < 3; i++)
+        {
+            float &d = ent->client->slow_view_angles[i];
 
-			if (d > 180)
-				d -= 360;
-			if (d < -180)
-				d += 360;
-			if (d > 45)
-				d = 45;
-			if (d < -45)
-				d = -45;
+            if (!d)
+                continue;
 
-			// [Sam-KEX] Apply only half-delta. Makes the weapons look less detatched from the player.
-			if (i == ROLL)
-				ent->client->ps.gunangles[i] += (0.1f * d) * 0.5f;
-			else
-				ent->client->ps.gunangles[i] += (0.2f * d) * 0.5f;
+            if (d > 180)
+                d -= 360;
+            if (d < -180)
+                d += 360;
+            if (d > 45)
+                d = 45;
+            if (d < -45)
+                d = -45;
 
-			float reduction_factor = viewangles_delta[i] ? 0.05f : 0.15f;
+            // Apply only half the delta to keep the weapon from feeling detached.
+            if (i == ROLL)
+                ent->client->ps.gunangles[i] += (0.1f * d) * 0.5f;
+            else
+                ent->client->ps.gunangles[i] += (0.2f * d) * 0.5f;
 
-			if (d > 0)
-				d = max(0.f, d - gi.frame_time_ms * reduction_factor);
-			else if (d < 0)
-				d = min(0.f, d + gi.frame_time_ms * reduction_factor);
-		}
+            // Gradually reduce the accumulated delta over time.
+            float reduction_factor = viewangles_delta[i] ? 0.05f : 0.15f;
+            if (d > 0)
+                d = max(0.f, d - gi.frame_time_ms * reduction_factor);
+            else if (d < 0)
+                d = min(0.f, d + gi.frame_time_ms * reduction_factor);
+        }
 
-		// [Paril-KEX] cl_rollhack
-		ent->client->ps.gunangles[ROLL] = -ent->client->ps.gunangles[ROLL];
-	}
-	// ROGUE
-	else
-	{
-		for (i = 0; i < 3; i++)
-			ent->client->ps.gunangles[i] = 0;
-	}
-	// ROGUE
+        // [Paril-KEX] cl_rollhack: Invert roll so the weapon appears correctly.
+        ent->client->ps.gunangles[ROLL] = -ent->client->ps.gunangles[ROLL];
+    }
+    else
+    {
+        // If no valid weapon or if view modifiers are skipped, clear the gun angles.
+        for (i = 0; i < 3; i++)
+            ent->client->ps.gunangles[i] = 0;
+    }
 
-	// gun height
-	ent->client->ps.gunoffset = {};
-
-	// gun_x / gun_y / gun_z are development tools
-	for (i = 0; i < 3; i++)
-	{
-		ent->client->ps.gunoffset[i] += forward[i] * (gun_y->value);
-		ent->client->ps.gunoffset[i] += right[i] * gun_x->value;
-		ent->client->ps.gunoffset[i] += up[i] * (-gun_z->value);
-	}
+    // --- Gun Offset Calculation ---
+    // Reset gun offset, then apply developer-defined adjustments based on forward/right/up vectors.
+    ent->client->ps.gunoffset = {};
+    for (i = 0; i < 3; i++)
+    {
+        ent->client->ps.gunoffset[i] += forward[i] * (gun_y->value);
+        ent->client->ps.gunoffset[i] += right[i]  * gun_x->value;
+        ent->client->ps.gunoffset[i] += up[i]     * (-gun_z->value);
+    }
 }
+
 
 /*
 =============
@@ -860,136 +738,136 @@ void P_WorldEffects()
 /*
 ===============
 G_SetClientEffects
+
+Sets visual effects for the player entity including powerup effects,
+team colors, and environmental indicators. Contains special handling
+for third-person mode to maintain player model visibility.
 ===============
 */
 void G_SetClientEffects(edict_t *ent)
 {
-	int pa_type;
+    // Early check for third-person mode
+    // If active, apply minimal effects and ensure player model visibility
+    if (sv_thirdperson && sv_thirdperson->integer && 
+        ent->health > 0 && !ent->client->resp.spectator)
+    {
+        // Set minimal effects to avoid interference with visibility
+        ent->s.effects = EF_NONE;
+        ent->s.renderfx &= RF_STAIR_STEP;
+        ent->s.renderfx |= RF_IR_VISIBLE;
+        ent->s.alpha = 1.0;
+        
+        // Force model visibility (critical for third-person)
+        ent->svflags &= ~SVF_NOCLIENT;
+        ent->flags &= ~FL_NOVISIBLE;
+        
+        // Link entity to propagate changes
+        gi.linkentity(ent);
+        
+        // Exit early to prevent other effects from interfering
+        return;
+    }
 
-	ent->s.effects = EF_NONE;
-	ent->s.renderfx &= RF_STAIR_STEP;
-	ent->s.renderfx |= RF_IR_VISIBLE;
-	ent->s.alpha = 1.0;
+    // Reset effects for normal first-person processing
+    ent->s.effects = EF_NONE;
+    ent->s.renderfx &= RF_STAIR_STEP;
+    ent->s.renderfx |= RF_IR_VISIBLE;
+    ent->s.alpha = 1.0;
 
-	if (ent->health <= 0 || level.intermissiontime)
-		return;
+    // Skip remaining effects if player is dead or during intermission
+    if (ent->health <= 0 || level.intermissiontime)
+        return;
 
-	if (ent->flags & FL_FLASHLIGHT)
-		ent->s.effects |= EF_FLASHLIGHT;
+    // -- Standard effects processing below --
+    
+    // Flashlight
+    if (ent->flags & FL_FLASHLIGHT)
+        ent->s.effects |= EF_FLASHLIGHT;
 
-	//=========
-	// PGM
-	if (ent->flags & FL_DISGUISED)
-		ent->s.renderfx |= RF_USE_DISGUISE;
+    // Disguise effect (PGM)
+    if (ent->flags & FL_DISGUISED)
+        ent->s.renderfx |= RF_USE_DISGUISE;
 
-	if (gamerules->integer)
-	{
-		if (DMGame.PlayerEffects)
-			DMGame.PlayerEffects(ent);
-	}
-	// PGM
-	//=========
+    // Gamerules-based effects (PGM)
+    if (gamerules->integer && DMGame.PlayerEffects)
+        DMGame.PlayerEffects(ent);
 
-	if (ent->powerarmor_time > level.time)
-	{
-		pa_type = PowerArmorType(ent);
-		if (pa_type == IT_ITEM_POWER_SCREEN)
-		{
-			ent->s.effects |= EF_POWERSCREEN;
-		}
-		else if (pa_type == IT_ITEM_POWER_SHIELD)
-		{
-			ent->s.effects |= EF_COLOR_SHELL;
-			ent->s.renderfx |= RF_SHELL_GREEN;
-		}
-	}
+    // Power armor effects
+    if (ent->powerarmor_time > level.time)
+    {
+        int pa_type = PowerArmorType(ent);
+        if (pa_type == IT_ITEM_POWER_SCREEN)
+        {
+            ent->s.effects |= EF_POWERSCREEN;
+        }
+        else if (pa_type == IT_ITEM_POWER_SHIELD)
+        {
+            ent->s.effects |= EF_COLOR_SHELL;
+            ent->s.renderfx |= RF_SHELL_GREEN;
+        }
+    }
 
-	// ZOID
-	CTFEffects(ent);
-	// ZOID
+    // CTF-specific effects
+    CTFEffects(ent);
 
-	if (ent->client->quad_time > level.time)
-	{
-		if (G_PowerUpExpiring(ent->client->quad_time))
-			CTFSetPowerUpEffect(ent, EF_QUAD);
-	}
+    // Quad damage effect
+    if (ent->client->quad_time > level.time)
+    {
+        if (G_PowerUpExpiring(ent->client->quad_time))
+            CTFSetPowerUpEffect(ent, EF_QUAD);
+    }
 
-	// RAFAEL
-	if (ent->client->quadfire_time > level.time)
-	{;
-		if (G_PowerUpExpiring(ent->client->quadfire_time))
-			CTFSetPowerUpEffect(ent, EF_DUALFIRE);
-	}
-	// RAFAEL
-	//=======
-	// ROGUE
-	if (ent->client->double_time > level.time)
-	{
-		if (G_PowerUpExpiring(ent->client->double_time))
-			CTFSetPowerUpEffect(ent, EF_DOUBLE);
-	}
-	if ((ent->client->owned_sphere) && (ent->client->owned_sphere->spawnflags == SPHERE_DEFENDER))
-	{
-		CTFSetPowerUpEffect(ent, EF_HALF_DAMAGE);
-	}
-	if (ent->client->tracker_pain_time > level.time)
-	{
-		ent->s.effects |= EF_TRACKERTRAIL;
-	}
-	if (ent->client->invisible_time > level.time)
-	{
-		if (ent->client->invisibility_fade_time <= level.time)
-			ent->s.alpha = 0.1f;
-		else
-		{
-			float x = (ent->client->invisibility_fade_time - level.time).seconds() / INVISIBILITY_TIME.seconds();
-			ent->s.alpha = std::clamp(x, 0.1f, 1.0f);
-		}
-	}
-	// ROGUE
-	//=======
+    // Quad fire effect (RAFAEL)
+    if (ent->client->quadfire_time > level.time)
+    {
+        if (G_PowerUpExpiring(ent->client->quadfire_time))
+            CTFSetPowerUpEffect(ent, EF_DUALFIRE);
+    }
 
-	if (ent->client->invincible_time > level.time)
-	{
-		if (G_PowerUpExpiring(ent->client->invincible_time))
-			CTFSetPowerUpEffect(ent, EF_PENT);
-	}
+    // Double damage effect (ROGUE)
+    if (ent->client->double_time > level.time)
+    {
+        if (G_PowerUpExpiring(ent->client->double_time))
+            CTFSetPowerUpEffect(ent, EF_DOUBLE);
+    }
 
-	// show cheaters!!!
-	if (ent->flags & FL_GODMODE)
-	{
-		ent->s.effects |= EF_COLOR_SHELL;
-		ent->s.renderfx |= (RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE);
-	}
+    // Defender sphere effect (ROGUE)
+    if ((ent->client->owned_sphere) && (ent->client->owned_sphere->spawnflags == SPHERE_DEFENDER))
+    {
+        CTFSetPowerUpEffect(ent, EF_HALF_DAMAGE);
+    }
 
-#if 0
-	// disintegrator stuff
-	if (ent->disintegrator_time)
-	{
-		if (ent->disintegrator_time > 100_sec)
-		{
-			gi.WriteByte(svc_temp_entity);
-			gi.WriteByte(TE_BOSSTPORT);
-			gi.WritePosition(ent->s.origin);
-			gi.multicast(ent->s.origin, MULTICAST_PHS, false);
+    // Tracker pain effect (ROGUE)
+    if (ent->client->tracker_pain_time > level.time)
+    {
+        ent->s.effects |= EF_TRACKERTRAIL;
+    }
 
-			Killed(ent, ent, ent, 999999, vec3_origin, MOD_NUKE);
-			ent->disintegrator_time = 0_ms;
-			ThrowClientHead(ent, 9999);
-			ent->s.modelindex = 0;
-			ent->solid = SOLID_NOT;
-		}
-		else
-		{
-			ent->disintegrator_time = max(0_ms, ent->disintegrator_time - 1500_ms);
+    // Invisibility effect (ROGUE)
+    if (ent->client->invisible_time > level.time)
+    {
+        if (ent->client->invisibility_fade_time <= level.time)
+            ent->s.alpha = 0.1f;
+        else
+        {
+            float x = (ent->client->invisibility_fade_time - level.time).seconds() / INVISIBILITY_TIME.seconds();
+            ent->s.alpha = std::clamp(x, 0.1f, 1.0f);
+        }
+    }
 
-			if (ent->disintegrator_time)
-				ent->s.alpha = max(1 / 255.f, 1.f - (ent->disintegrator_time.seconds() / 100));
-			else
-				ent->s.alpha = 1;
-		}
-	}
-#endif
+    // Invincibility effect
+    if (ent->client->invincible_time > level.time)
+    {
+        if (G_PowerUpExpiring(ent->client->invincible_time))
+            CTFSetPowerUpEffect(ent, EF_PENT);
+    }
+
+    // God mode effect (cheat)
+    if (ent->flags & FL_GODMODE)
+    {
+        ent->s.effects |= EF_COLOR_SHELL;
+        ent->s.renderfx |= (RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE);
+    }
 }
 
 /*
@@ -1337,237 +1215,282 @@ static void G_SaveLagCompensation(edict_t *ent)
 		ent->client->num_lag_origins++;
 }
 
-/*
-=================
-ClientEndServerFrame
-
-Called for each player at the end of the server frame
-and right after spawning
-=================
-*/
+/**
+ * @brief End-of-frame processing for client entities
+ * 
+ * This function handles all per-frame processing for player entities including:
+ * - Camera and view management
+ * - Third-person mode handling
+ * - Player model visibility
+ * - Effect and sound updates
+ * - Animation processing
+ * 
+ * Called once per frame for each connected client.
+ * 
+ * @param ent The player entity being processed
+ */
 void ClientEndServerFrame(edict_t *ent)
 {
-	// no player exists yet (load game)
-	if (!ent->client->pers.spawned)
-		return;
+    // Skip processing for unspawned entities
+    if (!ent->client->pers.spawned)
+        return;
 
-	float bobtime, bobtime_run;
+    // Set up frame processing context
+    current_player = ent;
+    current_client = ent->client;
+    float bobtime, bobtime_run;
 
-	current_player = ent;
-	current_client = ent->client;
+    // Check for special game states that bypass normal processing
+    if (level.intermissiontime || ent->client->awaiting_respawn) {
+        // Handle intermission states
+        if (ent->client->awaiting_respawn || (level.intermission_eou || level.is_n64 || 
+            (deathmatch->integer && level.intermissiontime))) {
+            current_client->ps.screen_blend[3] = current_client->ps.damage_blend[3] = 0;
+            current_client->ps.fov = 90;
+            current_client->ps.gunindex = 0;
+        }
+        
+        // Update stats even during intermission
+        G_SetStats(ent);
+        G_SetCoopStats(ent);
 
-	// check fog changes
-	P_ForceFogTransition(ent, false);
+        // Update scoreboards if needed
+        if (deathmatch->integer && ent->client->showscores && ent->client->menutime) {
+            DeathmatchScoreboardMessage(ent, ent->enemy);
+            gi.unicast(ent, false);
+            ent->client->menutime = 0_ms;
+        }
 
-	// check goals
-	G_PlayerNotifyGoal(ent);
+        return;
+    }
 
-	// mega health
-	P_RunMegaHealth(ent);
+    // Update fog effects
+    P_ForceFogTransition(ent, false);
 
-	//
-	// If the origin or velocity have changed since ClientThink(),
-	// update the pmove values.  This will happen when the client
-	// is pushed by a bmodel or kicked by an explosion.
-	//
-	// If it wasn't updated here, the view position would lag a frame
-	// behind the body position when pushed -- "sinking into plats"
-	//
-	current_client->ps.pmove.origin = ent->s.origin;
-	current_client->ps.pmove.velocity = ent->velocity;
+    // Update goal notification
+    G_PlayerNotifyGoal(ent);
 
-	//
-	// If the end of unit layout is displayed, don't give
-	// the player any normal movement attributes
-	//
-	if (level.intermissiontime || ent->client->awaiting_respawn)
-	{
-		if (ent->client->awaiting_respawn || (level.intermission_eou || level.is_n64 || (deathmatch->integer && level.intermissiontime)))
-		{
-			current_client->ps.screen_blend[3] = current_client->ps.damage_blend[3] = 0;
-			current_client->ps.fov = 90;
-			current_client->ps.gunindex = 0;
-		}
-		G_SetStats(ent);
-		G_SetCoopStats(ent);
+    // Run health effects
+    P_RunMegaHealth(ent);
 
-		// if the scoreboard is up, update it if a client leaves
-		if (deathmatch->integer && ent->client->showscores && ent->client->menutime)
-		{
-			DeathmatchScoreboardMessage(ent, ent->enemy);
-			gi.unicast(ent, false);
-			ent->client->menutime = 0_ms;
-		}
+    // Synchronize physics state
+    current_client->ps.pmove.origin = ent->s.origin;
+    current_client->ps.pmove.velocity = ent->velocity;
 
-		return;
-	}
+    // ===== THIRD-PERSON MODE PROCESSING =====
+    // Detect third-person mode and apply appropriate handling
+    bool thirdPersonActive = (sv_thirdperson && sv_thirdperson->integer && 
+                             ent->health > 0 && !ent->client->resp.spectator);
+    
+    // Apply special third-person processing if active
+    if (thirdPersonActive) {
+        // PHASE 1: Force model visibility and correct entity state
+        ent->svflags &= ~SVF_NOCLIENT;  // Make player model visible
+        ent->flags &= ~FL_NOVISIBLE;    // Clear invisibility flags
+        ent->solid = SOLID_BBOX;        // Ensure proper collision
+        ent->s.modelindex = 255;        // Force correct model index
+        
+        // PHASE 2: Apply CTF effects if needed
+        CTFApplyRegeneration(ent);
+        
+        // PHASE 3: Calculate view vectors for the frame
+        AngleVectors(ent->client->v_angle, forward, right, up);
+        
+        // PHASE 4: Process world environmental effects
+        P_WorldEffects();
+        
+        // PHASE 5: Set up third-person camera
+        G_SetThirdPersonView(ent);
+        
+        // PHASE 6: Process essential visual effects 
+        // (subset of normal processing appropriate for third-person)
+        P_DamageFeedback(ent);
+        SV_CalcViewOffset(ent);
+        SV_CalcBlend(ent);
+        G_SetStats(ent);
+        G_CheckChaseStats(ent);
+        G_SetCoopStats(ent);
+        G_SetClientSound(ent);
+        G_SetClientFrame(ent);
+        
+        // PHASE 7: Store state for next frame
+        ent->client->oldvelocity = ent->velocity;
+        ent->client->oldviewangles = ent->client->ps.viewangles;
+        ent->client->oldgroundentity = ent->groundentity;
+        
+        // PHASE 8: Final updates for third-person mode
+        P_AssignClientSkinnum(ent);
+        
+        if (deathmatch->integer)
+            G_SaveLagCompensation(ent);
+            
+        Compass_Update(ent, false);
+        
+        // PHASE 9: Final visibility enforcement
+        ent->svflags &= ~SVF_NOCLIENT;
+        gi.linkentity(ent);
+        
+        // Handle player collision in coop mode
+        if (coop->integer && G_ShouldPlayersCollide(false) && 
+            !(ent->clipmask & CONTENTS_PLAYER) && ent->takedamage) {
+            
+            bool clipped_player = false;
+            
+            for (auto player : active_players()) {
+                if (player == ent)
+                    continue;
+                
+                trace_t clip = gi.clip(player, ent->s.origin, ent->mins, ent->maxs, 
+                                      ent->s.origin, CONTENTS_MONSTER | CONTENTS_PLAYER);
+                
+                if (clip.startsolid || clip.allsolid) {
+                    clipped_player = true;
+                    break;
+                }
+            }
+            
+            // Safe to enable player collision
+            if (!clipped_player)
+                ent->clipmask |= CONTENTS_PLAYER;
+        }
+        
+        // Skip standard processing for third-person mode
+        return;
+    }
 
-	// ZOID
-	// regen tech
-	CTFApplyRegeneration(ent);
-	// ZOID
+    // ===== STANDARD FIRST-PERSON PROCESSING =====
+    // Only executed for first-person mode
 
-	AngleVectors(ent->client->v_angle, forward, right, up);
+    // Apply team-specific regeneration effects
+    CTFApplyRegeneration(ent);
 
-	// burn from lava, etc
-	P_WorldEffects();
+    // Calculate view vectors
+    AngleVectors(ent->client->v_angle, forward, right, up);
 
-	//
-	// set model angles from view angles so other things in
-	// the world can tell which direction you are looking
-	//
-	if (ent->client->v_angle[PITCH] > 180)
-		ent->s.angles[PITCH] = (-360 + ent->client->v_angle[PITCH]) / 3;
-	else
-		ent->s.angles[PITCH] = ent->client->v_angle[PITCH] / 3;
-	
-	ent->s.angles[YAW] = ent->client->v_angle[YAW];
-	ent->s.angles[ROLL] = 0;
-	// [Paril-KEX] cl_rollhack
-	ent->s.angles[ROLL] = -SV_CalcRoll(ent->s.angles, ent->velocity) * 4;
+    // Process environmental effects
+    P_WorldEffects();
 
-	//
-	// calculate speed and cycle to be used for
-	// all cyclic walking effects
-	//
-	xyspeed = sqrt(ent->velocity[0] * ent->velocity[0] + ent->velocity[1] * ent->velocity[1]);
+    // Calculate model angles from view direction
+    if (ent->client->v_angle[PITCH] > 180)
+        ent->s.angles[PITCH] = (-360 + ent->client->v_angle[PITCH]) / 3;
+    else
+        ent->s.angles[PITCH] = ent->client->v_angle[PITCH] / 3;
+    
+    ent->s.angles[YAW] = ent->client->v_angle[YAW];
+    ent->s.angles[ROLL] = 0;
+    ent->s.angles[ROLL] = -SV_CalcRoll(ent->s.angles, ent->velocity) * 4;
 
-	if (xyspeed < 5)
-	{
-		bobmove = 0;
-		current_client->bobtime = 0; // start at beginning of cycle again
-	}
-	else if (ent->groundentity)
-	{ // so bobbing only cycles when on ground
-		if (xyspeed > 210)
-			bobmove = gi.frame_time_ms / 400.f;
-		else if (xyspeed > 100)
-			bobmove = gi.frame_time_ms / 800.f;
-		else
-			bobmove = gi.frame_time_ms / 1600.f;
-	}
+    // Calculate movement parameters
+    xyspeed = sqrt(ent->velocity[0] * ent->velocity[0] + ent->velocity[1] * ent->velocity[1]);
 
-	bobtime = (current_client->bobtime += bobmove);
-	bobtime_run = bobtime;
+    // Handle bobbing calculation
+    if (xyspeed < 5) {
+        bobmove = 0;
+        current_client->bobtime = 0;
+    } else if (ent->groundentity) {
+        if (xyspeed > 210)
+            bobmove = gi.frame_time_ms / 400.f;
+        else if (xyspeed > 100)
+            bobmove = gi.frame_time_ms / 800.f;
+        else
+            bobmove = gi.frame_time_ms / 1600.f;
+    }
 
-	if ((current_client->ps.pmove.pm_flags & PMF_DUCKED) && ent->groundentity)
-		bobtime *= 4;
+    // Calculate bob timing
+    bobtime = (current_client->bobtime += bobmove);
+    bobtime_run = bobtime;
 
-	bobcycle = (int) bobtime;
-	bobcycle_run = (int) bobtime_run;
-	bobfracsin = fabsf(sinf(bobtime * PIf));
+    if ((current_client->ps.pmove.pm_flags & PMF_DUCKED) && ent->groundentity)
+        bobtime *= 4;
 
-	// apply all the damage taken this frame
-	P_DamageFeedback(ent);
+    bobcycle = (int) bobtime;
+    bobcycle_run = (int) bobtime_run;
+    bobfracsin = fabsf(sinf(bobtime * PIf));
 
-	// determine the view offsets
-	SV_CalcViewOffset(ent);
+    // Process standard player visual effects
+    P_DamageFeedback(ent);
+    SV_CalcViewOffset(ent);
+    SV_CalcGunOffset(ent);
+    SV_CalcBlend(ent);
 
-	// determine the gun offsets
-	SV_CalcGunOffset(ent);
+    // Handle spectator and stats
+    if (ent->client->resp.spectator)
+        G_SetSpectatorStats(ent);
+    else
+        G_SetStats(ent);
 
-	// determine the full screen color blend
-	// must be after viewoffset, so eye contents can be
-	// accurately determined
-	SV_CalcBlend(ent);
+    G_CheckChaseStats(ent);
+    G_SetCoopStats(ent);
 
-	// chase cam stuff
-	if (ent->client->resp.spectator)
-		G_SetSpectatorStats(ent);
-	else
-		G_SetStats(ent);
+    // Process visual and audio events
+    G_SetClientEvent(ent);
+    G_SetClientEffects(ent);
+    G_SetClientSound(ent);
+    G_SetClientFrame(ent);
 
-	G_CheckChaseStats(ent);
+    // Store state for next frame
+    ent->client->oldvelocity = ent->velocity;
+    ent->client->oldviewangles = ent->client->ps.viewangles;
+    ent->client->oldgroundentity = ent->groundentity;
 
-	G_SetCoopStats(ent);
+    // Handle menu updates
+    if (ent->client->menudirty && ent->client->menutime <= level.time) {
+        if (ent->client->menu) {
+            PMenu_Do_Update(ent);
+            gi.unicast(ent, true);
+        }
+        ent->client->menutime = level.time;
+        ent->client->menudirty = false;
+    }
 
-	G_SetClientEvent(ent);
+    // Update scoreboards
+    if (ent->client->showscores && ent->client->menutime <= level.time) {
+        if (ent->client->menu) {
+            PMenu_Do_Update(ent);
+            ent->client->menudirty = false;
+        } else {
+            DeathmatchScoreboardMessage(ent, ent->enemy);
+        }
+        gi.unicast(ent, false);
+        ent->client->menutime = level.time + 3_sec;
+    }
 
-	G_SetClientEffects(ent);
+    // Handle bot processing
+    if ((ent->svflags & SVF_BOT) != 0) {
+        Bot_EndFrame(ent);
+    }
 
-	G_SetClientSound(ent);
+    // Update visual appearance
+    P_AssignClientSkinnum(ent);
 
-	G_SetClientFrame(ent);
+    // Handle network lag compensation
+    if (deathmatch->integer)
+        G_SaveLagCompensation(ent);
 
-	ent->client->oldvelocity = ent->velocity;
-	ent->client->oldviewangles = ent->client->ps.viewangles;
-	ent->client->oldgroundentity = ent->groundentity;
+    // Update compass
+    Compass_Update(ent, false);
 
-	// ZOID
-	if (ent->client->menudirty && ent->client->menutime <= level.time)
-	{
-		if (ent->client->menu)
-		{
-			PMenu_Do_Update(ent);
-			gi.unicast(ent, true);
-		}
-		ent->client->menutime = level.time;
-		ent->client->menudirty = false;
-	}
-	// ZOID
-
-	// if the scoreboard is up, update it
-	if (ent->client->showscores && ent->client->menutime <= level.time)
-	{
-		// ZOID
-		if (ent->client->menu)
-		{
-			PMenu_Do_Update(ent);
-			ent->client->menudirty = false;
-		}
-		else
-			// ZOID
-			DeathmatchScoreboardMessage(ent, ent->enemy);
-		gi.unicast(ent, false);
-		ent->client->menutime = level.time + 3_sec;
-	}
-
-	if ( ( ent->svflags & SVF_BOT ) != 0 ) {
-		Bot_EndFrame( ent );
-	}
-
-	P_AssignClientSkinnum(ent);
-
-	if (deathmatch->integer)
-		G_SaveLagCompensation(ent);
-
-	Compass_Update(ent, false);
-
-	// [Paril-KEX] in coop, if player collision is enabled and
-	// we are currently in no-player-collision mode, check if
-	// it's safe.
-	if (coop->integer && G_ShouldPlayersCollide(false) && !(ent->clipmask & CONTENTS_PLAYER) && ent->takedamage)
-	{
-		bool clipped_player = false;
-
-		for (auto player : active_players())
-		{
-			if (player == ent)
-				continue;
-
-			trace_t clip = gi.clip(player, ent->s.origin, ent->mins, ent->maxs, ent->s.origin, CONTENTS_MONSTER | CONTENTS_PLAYER);
-
-			if (clip.startsolid || clip.allsolid)
-			{
-				clipped_player = true;
-				break;
-			}
-		}
-
-		// safe!
-		if (!clipped_player)
-			ent->clipmask |= CONTENTS_PLAYER;
-	}
-
-	// -----------------------------------------
-    // THIRD-PERSON TOGGLE
-    // -----------------------------------------
-	if (sv_thirdperson && sv_thirdperson->value != 0)
-	{
-		if (ent->health > 0 && !ent->client->resp.spectator)
-		{
-			G_SetThirdPersonView(ent);
-		}
-	}
-    // -----------------------------------------
+    // Handle player collision in coop mode
+    if (coop->integer && G_ShouldPlayersCollide(false) && 
+        !(ent->clipmask & CONTENTS_PLAYER) && ent->takedamage) {
+        
+        bool clipped_player = false;
+        
+        for (auto player : active_players()) {
+            if (player == ent)
+                continue;
+            
+            trace_t clip = gi.clip(player, ent->s.origin, ent->mins, ent->maxs, 
+                                  ent->s.origin, CONTENTS_MONSTER | CONTENTS_PLAYER);
+            
+            if (clip.startsolid || clip.allsolid) {
+                clipped_player = true;
+                break;
+            }
+        }
+        
+        // Safe to enable player collision
+        if (!clipped_player)
+            ent->clipmask |= CONTENTS_PLAYER;
+    }
 }

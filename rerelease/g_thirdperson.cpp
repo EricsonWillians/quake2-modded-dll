@@ -1,122 +1,129 @@
 // g_thirdperson.cpp
-// Copyright (c) Ericson Willians.
-// Licensed under the GNU General Public License 2.0.
+// Improved third-person camera implementation for Quake 2 Rerelease
 
 #include "g_local.h"
-#include "q_vec3.h"  // Provides our vec3_t definition and vector operators
-#include "game.h"   // For entity_state_t
+#include "q_vec3.h"
+#include "game.h"
+#include <cmath>
+#include <algorithm>
 
-/*
-==============
-G_SetThirdPersonView
-==============
-*/
+// Helper: Linear interpolation for floats
+static inline float Lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+// Helper: Component-wise linear interpolation for vectors
+static inline vec3_t LerpVec(const vec3_t &a, const vec3_t &b, float t) {
+    vec3_t result;
+    result.x = Lerp(a.x, b.x, t);
+    result.y = Lerp(a.y, b.y, t);
+    result.z = Lerp(a.z, b.z, t);
+    return result;
+}
+
+// Helper: Linear interpolation for angles (handles wrap-around if needed)
+static inline vec3_t LerpAngles(const vec3_t &a, const vec3_t &b, float t) {
+    vec3_t result;
+    result.x = Lerp(a.x, b.x, t);
+    result.y = Lerp(a.y, b.y, t);
+    result.z = Lerp(a.z, b.z, t);
+    return result;
+}
 
 void G_SetThirdPersonView(edict_t *ent) {
-    // --- Robustness Checks ---
-    if (!ent || !ent->client) {
+    // --- Early Exit Checks ---
+    if (!ent || !ent->client || ent->health <= 0 || ent->client->resp.spectator)
         return;
-    }
-    // Early exit if dead, spectating.  This prevents camera glitches.
-    if (ent->health <= 0 || ent->client->resp.spectator)
-    {
-        return;
-    }
+    
     if (!sv_thirdperson || !sv_thirdperson->integer)
-    {
         return;
-    }
 
-    // --- Customizable Configuration (Read from CVARs) ---
-    const float distance = clampval(tp_distance->value, 16.0f, 512.0f);  // Prevent extreme values
-    const float heightOffset = clampval(tp_height->value, -64.0f, 128.0f); // Allow going below the player
-    const float sideOffset = clampval(tp_side->value, -128.0f, 128.0f);
-    const float cameraSmoothingFactor = clampval(tp_smooth->value, 0.0f, 1.0f); //0 to 1 range.
-    const float angleSmoothingFactor = clampval(tp_smooth->value, 0.0f, 1.0f); //Use the same cvar for angle smooth
-    const float minCollisionDistance = 8.0f; // Minimum distance from walls
+    // --- Force Player Model Visibility ---
+    ent->svflags   &= ~SVF_NOCLIENT;
+    ent->flags     &= ~FL_NOVISIBLE;
+    ent->solid      = SOLID_BBOX;
+    ent->clipmask   = MASK_PLAYERSOLID;
+    ent->s.modelindex = 255;      // Force player model index
+    ent->client->ps.gunindex = 0;   // Hide weapon model
+    P_AssignClientSkinnum(ent);
 
-    // --- Camera Positioning ---
+    // --- Retrieve and Clamp CVAR Parameters ---
+    const float distance    = (tp_distance ? tp_distance->value : 64.0f);
+    const float heightOffset = (tp_height   ? tp_height->value   : 0.0f);
+    const float sideOffset  = (tp_side     ? tp_side->value     : 0.0f);
+    const float smoothFactor = (tp_smooth   ? tp_smooth->value   : 0.5f);
+    const float minCollisionDistance = 8.0f;
+    const float maxDistance = 512.0f;
 
-    // 1. Calculate the *ideal* camera position (no collision checks yet).
+    const float effective_distance = std::clamp(distance, 16.0f, maxDistance);
+    const float effective_height   = std::clamp(heightOffset, -64.0f, 128.0f);
+    const float effective_side     = std::clamp(sideOffset, -128.0f, 128.0f);
+    const float effective_smooth   = std::clamp(smoothFactor, 0.0f, 1.0f);
+
+    // --- Calculate Base Vectors and Player Eye Position ---
     vec3_t forward, right, up;
-    AngleVectors(ent->client->v_angle, forward, right, up); // Use player's *input* angles
+    AngleVectors(ent->client->v_angle, forward, right, up);
 
-    vec3_t ownerOrigin = ent->s.origin;
-    ownerOrigin.z += ent->viewheight;  // Start at eye level
+    vec3_t playerEyePos = ent->s.origin;
+    playerEyePos.z += ent->viewheight;
 
-    vec3_t desiredPos = ownerOrigin - (forward * distance) + (right * sideOffset);
-    desiredPos.z += heightOffset;
+    // --- Determine Desired Camera Position ---
+    vec3_t desiredPos;
+    desiredPos.x = playerEyePos.x - (forward.x * effective_distance) + (right.x * effective_side);
+    desiredPos.y = playerEyePos.y - (forward.y * effective_distance) + (right.y * effective_side);
+    desiredPos.z = playerEyePos.z - (forward.z * effective_distance) + effective_height;
 
     // --- Collision Detection ---
+    trace_t trace = gi.traceline(playerEyePos, desiredPos, ent, MASK_SOLID);
+    vec3_t cameraPos = trace.endpos;
 
-    // 2. Perform a trace from the player's eyes to the desired camera position.
-    trace_t trace = gi.traceline(ownerOrigin, desiredPos, ent, MASK_SOLID);
-    // 3. Adjust camera position based on collision, maintaining minimum distance.
-    vec3_t goal = trace.endpos;
-     if (trace.fraction < 1.0f)
-    {
-        // Calculate distance and direction to the obstruction.
-        const vec3_t obstructionDir = goal - ownerOrigin;
-        const float obstructionDist = obstructionDir.length();
-        // Prevent camera to glitch inside the player model when colliding.
-        if(obstructionDist <= minCollisionDistance)
-        {
-           goal = ownerOrigin;
+    if (trace.fraction < 1.0f) {
+        // Compute distance between player's eye and camera position
+        float obstructionDist = std::sqrt(
+            (cameraPos.x - playerEyePos.x) * (cameraPos.x - playerEyePos.x) +
+            (cameraPos.y - playerEyePos.y) * (cameraPos.y - playerEyePos.y) +
+            (cameraPos.z - playerEyePos.z) * (cameraPos.z - playerEyePos.z)
+        );
+
+        if (obstructionDist < minCollisionDistance) {
+            // Prevent camera from clipping too close
+            cameraPos = playerEyePos;
+        } else {
+            // Pull camera away from collision surface to avoid clipping
+            const float pullbackDistance = 2.0f;
+            cameraPos.x += trace.plane.normal.x * pullbackDistance;
+            cameraPos.y += trace.plane.normal.y * pullbackDistance;
+            cameraPos.z += trace.plane.normal.z * pullbackDistance;
         }
     }
 
-    // --- Smoothing (Optional) ---
-    vec3_t newViewOffset;
-    // Apply smoothing, unless the factor is 0
-    if (cameraSmoothingFactor > 0.0f) {
-        vec3_t currentViewOffset = ent->client->ps.viewoffset;
-        newViewOffset = goal - ent->s.origin; // Calculate offset from the entity origin
-        ent->client->ps.viewoffset = currentViewOffset + (newViewOffset - currentViewOffset) * cameraSmoothingFactor;
-    } else {
-        // No smoothing: directly set the view offset
-        ent->client->ps.viewoffset = goal - ent->s.origin;
-    }
+    // --- Compute New View Offset ---
+    vec3_t targetViewOffset;
+    targetViewOffset.x = cameraPos.x - ent->s.origin.x;
+    targetViewOffset.y = cameraPos.y - ent->s.origin.y;
+    targetViewOffset.z = cameraPos.z - ent->s.origin.z;
 
-    // --- Angle Handling (Smooth Rotation) ---
+    // Smooth the view offset transition
+    ent->client->ps.viewoffset = LerpVec(ent->client->ps.viewoffset, targetViewOffset, effective_smooth);
 
-    // 1. Calculate current and desired camera directions.
-    vec3_t currentAngles = ent->client->ps.viewangles;
-    vec3_t desiredAngles = ent->client->v_angle;  // Use player's *input* angles
+    // --- Smooth View Angle Update ---
+    vec3_t targetAngles = ent->client->v_angle;
+    ent->client->ps.viewangles = LerpAngles(ent->client->ps.viewangles, targetAngles, effective_smooth);
 
-    vec3_t currentDir, desiredDir;
-    AngleVectors(currentAngles, currentDir, nullptr, nullptr);
-    AngleVectors(desiredAngles, desiredDir, nullptr, nullptr);
-
-    // 2.  Use spherical linear interpolation (slerp) for smooth angle transitions.
-    vec3_t slerpedDir;
-    if(angleSmoothingFactor > 0.0f)
-    {
-        slerpedDir = slerp(currentDir, desiredDir, angleSmoothingFactor);
-        slerpedDir.normalize(); // Normalize to ensure a unit vector
-    }
-    else
-    {
-       slerpedDir = desiredDir; //If no smoothing, do not slerp
-    }
-
-    // 3. Convert the slerped direction back to angles.
-     ent->client->ps.viewangles = vectoangles(slerpedDir);
-
-    // 4. *Crucially* synchronize the player model's orientation with the camera.
+    // --- Update Player Model Orientation ---
     ent->s.angles = ent->client->ps.viewangles;
-    ent->s.angles[PITCH] = 0; // Player model should not pitch.
-    ent->s.angles[ROLL] = 0;  // Player model should not roll.
+    ent->s.angles[PITCH] = 0;
+    ent->s.angles[ROLL]  = 0;
 
-    // --- Weapon and Model Visibility ---
-
-    // Hide first-person weapon model and hands (essential for third-person).
-    ent->client->ps.gunindex = 0;
-    ent->client->ps.rdflags |= RDF_NOWORLDMODEL;
-
-    // --- Client Prediction ---
-    // Update delta_angles for client-side prediction.
+    // --- Client-Side Prediction Setup ---
+    // Set PM_SPECTATOR for view update, then defer reversion until after linking
+    ent->client->ps.pmove.pm_type = PM_SPECTATOR;
     ent->client->ps.pmove.delta_angles = ent->client->v_angle - ent->client->resp.cmd_angles;
 
-    // --- Link Entity ---
-    gi.linkentity(ent); // *Always* link the entity after modifying its position/angles.
+    // --- Link Entity Update ---
+    gi.linkentity(ent);
+
+    // --- Final: Revert Movement Type to Normal ---
+    // Delay reversion so that our custom view persists through the frame update
+    ent->client->ps.pmove.pm_type = PM_NORMAL;
 }

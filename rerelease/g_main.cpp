@@ -365,7 +365,7 @@ void InitGame()
 
 	// Custom cvars
 
-	sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_NOFLAGS);
+	sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_ARCHIVE);
 	// Third-person camera variables
 	tp_distance = gi.cvar("tp_distance", "128", CVAR_ARCHIVE);
 	tp_height   = gi.cvar("tp_height", "48", CVAR_ARCHIVE);
