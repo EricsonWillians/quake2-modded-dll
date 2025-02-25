@@ -1837,7 +1837,9 @@ void ClientDisconnect (edict_t *ent)
 	if (!ent->client)
 		return;
 
-	gi.bprintf (PRINT_HIGH, "%s disconnected\n", ent->client->pers.netname);
+	G_RemoveThirdPersonView(ent);
+
+	gi.bprintf(PRINT_HIGH, "%s disconnected\n", ent->client->pers.netname);
 
 //============
 //ROGUE

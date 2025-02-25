@@ -766,13 +766,13 @@ void G_SetClientEffects(edict_t *ent)
         
         // Exit early to prevent other effects from interfering
         return;
-    }
-
-    // Reset effects for normal first-person processing
-    ent->s.effects = EF_NONE;
-    ent->s.renderfx &= RF_STAIR_STEP;
-    ent->s.renderfx |= RF_IR_VISIBLE;
-    ent->s.alpha = 1.0;
+    } else {
+		// Reset effects for normal first-person processing
+		ent->s.effects = EF_NONE;
+		ent->s.renderfx &= RF_STAIR_STEP;
+		ent->s.renderfx |= RF_IR_VISIBLE;
+		ent->s.alpha = 1.0;
+	}
 
     // Skip remaining effects if player is dead or during intermission
     if (ent->health <= 0 || level.intermissiontime)
@@ -1288,7 +1288,7 @@ void ClientEndServerFrame(edict_t *ent)
         ent->svflags &= ~SVF_NOCLIENT;  // Make player model visible
         ent->flags &= ~FL_NOVISIBLE;    // Clear invisibility flags
         ent->solid = SOLID_BBOX;        // Ensure proper collision
-        ent->s.modelindex = 255;        // Force correct model index
+        ent->s.modelindex = MODELINDEX_PLAYER;        // Force correct model index
         
         // PHASE 2: Apply CTF effects if needed
         CTFApplyRegeneration(ent);

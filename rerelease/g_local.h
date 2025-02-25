@@ -3016,6 +3016,11 @@ struct gclient_t
 	gtime_t	 last_attacker_time;
 	// saved - for coop; last time we were in a firing state
 	gtime_t	 last_firing_time;
+
+	// custom
+
+	edict_t *playerAvatar;        // Visual entity for third-person
+    vec3_t  thirdperson_target; 
 };
 
 // ==========================================

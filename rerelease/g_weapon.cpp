@@ -1,6 +1,7 @@
 // Copyright (c) ZeniMax Media Inc.
 // Licensed under the GNU General Public License 2.0.
 #include "g_local.h"
+#include "g_thirdperson.h"
 
 /*
 =================
@@ -327,7 +328,14 @@ pistols, rifles, etc....
 */
 void fire_bullet(edict_t *self, const vec3_t &start, const vec3_t &aimdir, int damage, int kick, int hspread, int vspread, mod_t mod)
 {
-	fire_lead(self, start, aimdir, damage, kick, mod.id == MOD_TESLA ? -1 : TE_GUNSHOT, hspread, vspread, mod);
+    vec3_t modified_dir = aimdir;
+    vec3_t modified_start = start;
+    
+    // Adjust aim for third-person if active
+    G_AdjustThirdPersonAim(self, modified_start, modified_dir);
+    
+    // Call the original implementation with corrected aim
+    fire_lead(self, modified_start, modified_dir, damage, kick, mod.id == MOD_TESLA ? -1 : TE_GUNSHOT, hspread, vspread, mod);
 }
 
 /*
@@ -339,8 +347,15 @@ Shoots shotgun pellets.  Used by shotgun and super shotgun.
 */
 void fire_shotgun(edict_t *self, const vec3_t &start, const vec3_t &aimdir, int damage, int kick, int hspread, int vspread, int count, mod_t mod)
 {
-	for (int i = 0; i < count; i++)
-		fire_lead(self, start, aimdir, damage, kick, TE_SHOTGUN, hspread, vspread, mod);
+    vec3_t modified_dir = aimdir;
+    vec3_t modified_start = start;
+    
+    // Adjust aim for third-person if active
+    G_AdjustThirdPersonAim(self, modified_start, modified_dir);
+    
+    // Call the original implementation with pellets using corrected aim
+    for (int i = 0; i < count; i++)
+        fire_lead(self, modified_start, modified_dir, damage, kick, TE_SHOTGUN, hspread, vspread, mod);
 }
 
 /*

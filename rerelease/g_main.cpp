@@ -4,6 +4,7 @@
 #include "g_local.h"
 #include "bots/bot_includes.h"
 #include "q2game_api.h"
+#include "q2_modelindex_wrapper.h"
 
 
 CHECK_GCLIENT_INTEGRITY;

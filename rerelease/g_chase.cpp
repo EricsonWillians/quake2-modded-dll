@@ -4,96 +4,101 @@
 
 void UpdateChaseCam(edict_t *ent)
 {
-	vec3_t	 o, ownerv, goal;
-	edict_t *targ;
-	vec3_t	 forward, right;
-	trace_t	 trace;
-	vec3_t	 oldgoal;
-	vec3_t	 angles;
+    vec3_t   o, ownerv, goal;
+    edict_t *targ;
+    vec3_t   forward, right;
+    trace_t  trace;
+    vec3_t   oldgoal;
+    vec3_t   angles;
 
-	// is our chase target gone?
-	if (!ent->client->chase_target->inuse || ent->client->chase_target->client->resp.spectator)
-	{
-		edict_t *old = ent->client->chase_target;
-		ChaseNext(ent);
-		if (ent->client->chase_target == old)
-		{
-			ent->client->chase_target = nullptr;
-			ent->client->ps.pmove.pm_flags &= ~(PMF_NO_POSITIONAL_PREDICTION | PMF_NO_ANGULAR_PREDICTION);
-			return;
-		}
-	}
+    // is our chase target gone?
+    if (!ent->client->chase_target->inuse || ent->client->chase_target->client->resp.spectator)
+    {
+        edict_t *old = ent->client->chase_target;
+        ChaseNext(ent);
+        if (ent->client->chase_target == old)
+        {
+            ent->client->chase_target = nullptr;
+            ent->client->ps.pmove.pm_flags &= ~(PMF_NO_POSITIONAL_PREDICTION | PMF_NO_ANGULAR_PREDICTION);
+            return;
+        }
+    }
 
-	targ = ent->client->chase_target;
+    targ = ent->client->chase_target;
 
-	ownerv = targ->s.origin;
-	oldgoal = ent->s.origin;
+    // FORCE THE CHASE TARGET'S MODEL TO SHOW:
+    targ->svflags &= ~SVF_NOCLIENT;
+    targ->flags   &= ~FL_NOVISIBLE;
+    // Ensure a valid model index is used (adjust 255 as appropriate)
+    targ->s.modelindex = 255;
+    gi.linkentity(targ);
 
-	ownerv[2] += targ->viewheight;
+    ownerv = targ->s.origin;
+    oldgoal = ent->s.origin;
 
-	angles = targ->client->v_angle;
-	if (angles[PITCH] > 56)
-		angles[PITCH] = 56;
-	AngleVectors(angles, forward, right, nullptr);
-	forward.normalize();
-	o = ownerv + (forward * -30);
+    ownerv[2] += targ->viewheight;
 
-	if (o[2] < targ->s.origin[2] + 20)
-		o[2] = targ->s.origin[2] + 20;
+    angles = targ->client->v_angle;
+    if (angles[PITCH] > 56)
+        angles[PITCH] = 56;
+    AngleVectors(angles, forward, right, nullptr);
+    forward.normalize();
+    o = ownerv + (forward * -30);
 
-	// jump animation lifts
-	if (!targ->groundentity)
-		o[2] += 16;
+    if (o[2] < targ->s.origin[2] + 20)
+        o[2] = targ->s.origin[2] + 20;
 
-	trace = gi.traceline(ownerv, o, targ, MASK_SOLID);
+    // jump animation lifts
+    if (!targ->groundentity)
+        o[2] += 16;
 
-	goal = trace.endpos;
+    trace = gi.traceline(ownerv, o, targ, MASK_SOLID);
+    goal = trace.endpos;
+    goal += (forward * 2);
 
-	goal += (forward * 2);
+    // pad for floors and ceilings
+    o = goal;
+    o[2] += 6;
+    trace = gi.traceline(goal, o, targ, MASK_SOLID);
+    if (trace.fraction < 1)
+    {
+        goal = trace.endpos;
+        goal[2] -= 6;
+    }
 
-	// pad for floors and ceilings
-	o = goal;
-	o[2] += 6;
-	trace = gi.traceline(goal, o, targ, MASK_SOLID);
-	if (trace.fraction < 1)
-	{
-		goal = trace.endpos;
-		goal[2] -= 6;
-	}
+    o = goal;
+    o[2] -= 6;
+    trace = gi.traceline(goal, o, targ, MASK_SOLID);
+    if (trace.fraction < 1)
+    {
+        goal = trace.endpos;
+        goal[2] += 6;
+    }
 
-	o = goal;
-	o[2] -= 6;
-	trace = gi.traceline(goal, o, targ, MASK_SOLID);
-	if (trace.fraction < 1)
-	{
-		goal = trace.endpos;
-		goal[2] += 6;
-	}
+    if (targ->deadflag)
+        ent->client->ps.pmove.pm_type = PM_DEAD;
+    else
+        ent->client->ps.pmove.pm_type = PM_FREEZE;
 
-	if (targ->deadflag)
-		ent->client->ps.pmove.pm_type = PM_DEAD;
-	else
-		ent->client->ps.pmove.pm_type = PM_FREEZE;
+    ent->s.origin = goal;
+    ent->client->ps.pmove.delta_angles = targ->client->v_angle - ent->client->resp.cmd_angles;
 
-	ent->s.origin = goal;
-	ent->client->ps.pmove.delta_angles = targ->client->v_angle - ent->client->resp.cmd_angles;
+    if (targ->deadflag)
+    {
+        ent->client->ps.viewangles[ROLL] = 40;
+        ent->client->ps.viewangles[PITCH] = -15;
+        ent->client->ps.viewangles[YAW] = targ->client->killer_yaw;
+    }
+    else
+    {
+        ent->client->ps.viewangles = targ->client->v_angle;
+        ent->client->v_angle = targ->client->v_angle;
+        AngleVectors(ent->client->v_angle, ent->client->v_forward, nullptr, nullptr);
+    }
 
-	if (targ->deadflag)
-	{
-		ent->client->ps.viewangles[ROLL] = 40;
-		ent->client->ps.viewangles[PITCH] = -15;
-		ent->client->ps.viewangles[YAW] = targ->client->killer_yaw;
-	}
-	else
-	{
-		ent->client->ps.viewangles = targ->client->v_angle;
-		ent->client->v_angle = targ->client->v_angle;
-		AngleVectors(ent->client->v_angle, ent->client->v_forward, nullptr, nullptr);
-	}
-
-	ent->viewheight = 0;
-	ent->client->ps.pmove.pm_flags |= PMF_NO_POSITIONAL_PREDICTION | PMF_NO_ANGULAR_PREDICTION;
-	gi.linkentity(ent);
+    ent->viewheight = 0;
+    ent->client->ps.pmove.pm_flags |= PMF_NO_POSITIONAL_PREDICTION | PMF_NO_ANGULAR_PREDICTION;
+    gi.linkentity(ent);
 }
 
 void ChaseNext(edict_t *ent)

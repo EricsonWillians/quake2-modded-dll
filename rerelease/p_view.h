@@ -27,7 +27,4 @@ void G_SetClientEvent(edict_t *ent);
 void G_SetClientSound(edict_t *ent);
 void G_SetClientFrame(edict_t *ent);
 
-// Third-person camera
-void G_SetThirdPersonView(edict_t *ent);
-
 #endif // P_VIEW_H
