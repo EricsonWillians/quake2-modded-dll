@@ -3,6 +3,7 @@
 #include "g_local.h"
 #include "m_player.h"
 #include "bots/bot_includes.h"
+#include "p_view.h"
 #include "g_thirdperson.h"
 
 void SP_misc_teleporter_dest(edict_t *ent);
@@ -2298,6 +2299,24 @@ void PutClientInServer(edict_t *ent)
 	client->newweapon = client->pers.weapon;
 	ChangeWeapon(ent);
 
+	// Handle third-person visibility for newly spawned players
+	if (sv_thirdperson && sv_thirdperson->integer) {
+		// Clear the SVF_NOCLIENT flag to make player model visible
+		ent->svflags &= ~SVF_NOCLIENT;
+		ent->flags &= ~FL_NOVISIBLE;
+		
+		// CRITICAL: We need to ensure the solid state is correctly set
+		ent->solid = SOLID_BBOX;
+		
+		// Ensure modelindex is properly set
+		if (ent->s.modelindex != 255) {
+			ent->s.modelindex = 255;
+		}
+		
+		// Link the entity to apply changes
+		gi.linkentity(ent);
+	}
+
 	if (was_waiting_for_respawn)
 		G_PostRespawn(ent);
 }
@@ -3206,33 +3225,42 @@ void ClientThink(edict_t *ent, usercmd_t *ucmd)
 	else
 	{
 
-		// set up for pmove
-		memset(&pm, 0, sizeof(pm));
+		    // set up for pmove
+			memset(&pm, 0, sizeof(pm));
 		
-		if (ent->movetype == MOVETYPE_NOCLIP)
-		{
-			if (ent->client->menu)
+			if (ent->movetype == MOVETYPE_NOCLIP)
 			{
-				client->ps.pmove.pm_type = PM_FREEZE;
-				
-				// [Paril-KEX] handle menu movement
-				HandleMenuMovement(ent, ucmd);
+				if (ent->client->menu)
+				{
+					client->ps.pmove.pm_type = PM_FREEZE;
+					// [Paril-KEX] handle menu movement
+					HandleMenuMovement(ent, ucmd);
+				}
+				else if (ent->client->awaiting_respawn)
+					client->ps.pmove.pm_type = PM_FREEZE;
+				else if (ent->client->resp.spectator || (G_TeamplayEnabled() && ent->client->resp.ctf_team == CTF_NOTEAM))
+					client->ps.pmove.pm_type = PM_SPECTATOR;
+				else
+					client->ps.pmove.pm_type = PM_NOCLIP;
 			}
-			else if (ent->client->awaiting_respawn)
-				client->ps.pmove.pm_type = PM_FREEZE;
-			else if (ent->client->resp.spectator || (G_TeamplayEnabled() && ent->client->resp.ctf_team == CTF_NOTEAM))
-				client->ps.pmove.pm_type = PM_SPECTATOR;
+			// If third-person is active and the player is alive, force PM_NORMAL ---
+			else if (sv_thirdperson->integer && ent->health > 0 && !ent->deadflag)
+			{
+				client->ps.pmove.pm_type = PM_NORMAL;
+				// Force the player model to the standard modelindex
+				if (ent->s.modelindex != MODELINDEX_PLAYER)
+					ent->s.modelindex = MODELINDEX_PLAYER;
+					ent->client->ps.pmove.pm_flags &= ~(PMF_NO_POSITIONAL_PREDICTION | PMF_NO_ANGULAR_PREDICTION);
+			}
+			else if (ent->s.modelindex != MODELINDEX_PLAYER)
+				client->ps.pmove.pm_type = PM_GIB;
+			else if (ent->deadflag)
+				client->ps.pmove.pm_type = PM_DEAD;
+			else if (ent->client->ctf_grapplestate >= CTF_GRAPPLE_STATE_PULL)
+				client->ps.pmove.pm_type = PM_GRAPPLE;
 			else
-				client->ps.pmove.pm_type = PM_NOCLIP;
-		}
-		else if (ent->s.modelindex != MODELINDEX_PLAYER)
-			client->ps.pmove.pm_type = PM_GIB;
-		else if (ent->deadflag)
-			client->ps.pmove.pm_type = PM_DEAD;
-		else if (ent->client->ctf_grapplestate >= CTF_GRAPPLE_STATE_PULL)
-			client->ps.pmove.pm_type = PM_GRAPPLE;
-		else
-			client->ps.pmove.pm_type = PM_NORMAL;
+				client->ps.pmove.pm_type = PM_NORMAL;
+		
 
 		// [Paril-KEX]
 		if (!G_ShouldPlayersCollide(false) ||
@@ -3756,81 +3784,116 @@ static bool G_CoopRespawn(edict_t *ent)
 ClientBeginServerFrame
 
 This will be called once for each server frame, before running
-any other entities in the world.
+any other entities in the world. Handles player state transitions,
+visibility management, and core game loop operations.
 ==============
 */
-void ClientBeginServerFrame(edict_t *ent) {
-    if (!ent || !ent->client) {
-        return; // Early exit for invalid entities
-    }
+void ClientBeginServerFrame(edict_t *ent)
+{
+    // Validate entity and client pointers
+    if (!ent || !ent->client)
+        return;
 
     gclient_t *client = ent->client;
-    int buttonMask; //Keep buttonMask
 
-    if (gi.ServerFrame() != client->step_frame) {
+    // Verify client connection state
+    if (!client->pers.connected)
+        return;
+
+    // Reset stair step rendering flag for new frame
+    if (gi.ServerFrame() != client->step_frame)
         ent->s.renderfx &= ~RF_STAIR_STEP;
-    }
 
-    // Handle intermission immediately - no need to process anything else.
-    if (level.intermissiontime) {
+    // Skip processing during intermission
+    if (level.intermissiontime)
+        return;
+
+    // Handle clients awaiting respawn
+    if (client->awaiting_respawn) {
+        if ((level.time.milliseconds() % 500) == 0)
+            PutClientInServer(ent);
         return;
     }
 
-    // Handle pending respawn requests.  This is now more robust.
-    if (client->awaiting_respawn) {
-        if ((level.time.milliseconds() % 500) == 0) {
-            PutClientInServer(ent); // Attempt to respawn
-        }
-        return; // Don't process anything else if awaiting respawn.
-    }
-        // fire any buttons that have been pressed
-    if (client->latched_buttons)
-    {
+    // Process latched button states
+    if (client->latched_buttons) {
         client->buttons |= client->latched_buttons;
-		client->latched_buttons = BUTTON_NONE;
+        client->latched_buttons = BUTTON_NONE;
     }
 
-    // Bot handling (if applicable).  Good to keep this separate.
-    if (ent->svflags & SVF_BOT) {
+    // Bot AI handling if applicable
+    if (ent->svflags & SVF_BOT)
         Bot_BeginFrame(ent);
-    }
 
-    // ===== THIRD-PERSON / VISIBILITY HANDLING =====
-    // This section is now *much* more robust and handles several edge cases.
+    // ===== THIRD-PERSON PRE-PROCESSING =====
+    // Determine whether to use third-person mode. Note: even if sv_thirdperson is set,
+    // we want to force model visibility only if the client is not flagged as a spectator,
+    // not dead, and has positive health.
+    bool useThirdPerson = (sv_thirdperson && sv_thirdperson->integer) ? true : false;
+    bool shouldBeVisible = !(client->pers.spectator || client->resp.spectator || 
+                              (G_TeamplayEnabled() && client->resp.ctf_team == CTF_NOTEAM) ||
+                              (ent->health <= 0) || ent->deadflag);
 
-    // 1. Spectator Check:  PRIORITIZE spectator status.  If the player *wants* to be
-    //    a spectator, hide them immediately and skip other visibility logic.
-    if (client->pers.spectator || (G_TeamplayEnabled() && client->resp.ctf_team == CTF_NOTEAM))
-    {
-        ent->svflags |= SVF_NOCLIENT; // Ensure spectators are hidden.
-    }
-    else
-    {
-    // 2. Third-Person Check: Now done *only if not a spectator*.
-        if (sv_thirdperson->integer)
-        {
-            ent->svflags &= ~SVF_NOCLIENT;  // Make player model visible
-            // Check for FL_NOVISIBLE and clear it if third-person is enabled
-            if (ent->flags & FL_NOVISIBLE) {
-                ent->flags &= ~FL_NOVISIBLE;
-				gi.LocClient_Print(ent, PRINT_HIGH, "WARNING: FL_NOVISIBLE was set on player %s, cleared for third-person.\n", ent->client->pers.netname);
-            }
-            G_SetThirdPersonView(ent);      // Adjust camera
+    if (useThirdPerson && shouldBeVisible) {
+        // Force the player model visible:
+        ent->svflags &= ~SVF_NOCLIENT;      // Make sure the engine knows this entity should be drawn
+        client->pers.spectator = false;       // Ensure our own spectator flag is cleared
+        client->resp.spectator = false;
 
+        // Force the proper model index (MODELINDEX_PLAYER should be defined as 255)
+        if (ent->s.modelindex != 255) {
+            ent->s.modelindex = 255;
+            P_AssignClientSkinnum(ent);
         }
-        else
-        {
-            ent->svflags |= SVF_NOCLIENT;   // Hide player model (first-person)
-        }
+        
+        // Ensure the entity is solid so it can be seen
+        if (ent->solid == SOLID_NOT)
+            ent->solid = SOLID_BBOX;
     }
 
-    // ===== END VISIBILITY HANDLING =====
-
-    // Call ClientThink *AFTER* visibility and spectator handling, *BEFORE* weapon handling.
+    // Process client movement and input
     ClientThink(ent, &client->cmd);
 
+    // ===== THIRD-PERSON POST-THINK PROCESSING =====
+    if (useThirdPerson && shouldBeVisible) {
+        // Set up the third-person camera view
+        G_SetThirdPersonView(ent);
 
-    // Handle spectator respawn requests (if not already handled above).
+        // Optionally process client sound and frame updates
+        G_SetClientSound(ent);
+        G_SetClientFrame(ent);
+
+        // Weapon processing – if applicable in third-person mode
+        if (!client->weapon_thunk && !client->resp.spectator) {
+            Think_Weapon(ent);
+        } else {
+            client->weapon_thunk = false;
+        }
+        
+        // Update old state for next frame
+        client->oldvelocity = ent->velocity;
+        client->oldviewangles = client->ps.viewangles;
+        client->oldgroundentity = ent->groundentity;
+
+        // --- CRITICAL: Ensure our model remains visible ---
+        ent->svflags &= ~SVF_NOCLIENT;
+        if (ent->s.modelindex != 255) {
+            ent->s.modelindex = 255;
+            P_AssignClientSkinnum(ent);
+        }
+        ent->solid = SOLID_BBOX;
+
+        // Final link to propagate state changes
+        gi.linkentity(ent);
+
+        // Skip further first-person processing
+        return;
+    }
+    
+    // ===== NORMAL FIRST-PERSON PROCESSING =====
+    // Only executed if we're NOT in third-person mode
+    
+    // Handle spectator state transitions in deathmatch
     if (deathmatch->integer && !G_TeamplayEnabled() &&
         client->pers.spectator != client->resp.spectator &&
         (level.time - client->respawn_time) >= 5_sec)
@@ -3839,33 +3902,44 @@ void ClientBeginServerFrame(edict_t *ent) {
         return;
     }
 
-    // Weapon handling (now *after* ClientThink, which is generally correct).
+    // Weapon handling logic (only if not handled in third-person section)
     if (!client->weapon_thunk && !client->resp.spectator) {
         Think_Weapon(ent);
     } else {
         client->weapon_thunk = false;
     }
 
-    // Deadflag and respawn handling (remains largely unchanged).
+    // Handle player death and respawn timing
     if (ent->deadflag) {
         if (level.time > client->respawn_time && !level.coop_level_restart_time) {
             if (!G_CoopRespawn(ent)) {
-                buttonMask = (deathmatch->integer) ? BUTTON_ATTACK : ~0; //All bits to 1
+                int buttonMask = (deathmatch->integer) ? BUTTON_ATTACK : ~0;
+                
                 if ((client->latched_buttons & buttonMask) ||
                     (deathmatch->integer && g_dm_force_respawn->integer))
                 {
                     respawn(ent);
-                    // No need to clear latched_buttons - done in ClientThink
                 }
             }
         }
-        return; // Important: Return after handling death.
+        return;
     }
 
-    // Player trail (only in single-player/coop, and after all other logic).
+    // Add player position to trail for pathfinding in single-player/coop
     if (!deathmatch->integer) {
         PlayerTrail_Add(ent);
     }
+    
+    // At the end, update old states and link entity
+    client->oldvelocity = ent->velocity;
+    client->oldviewangles = client->ps.viewangles;
+    client->oldgroundentity = ent->groundentity;
+    gi.linkentity(ent);
+    
+    // Update player visuals
+    G_SetClientEffects(ent);
+    G_SetClientSound(ent);
+    G_SetClientFrame(ent);
 }
 
 /*

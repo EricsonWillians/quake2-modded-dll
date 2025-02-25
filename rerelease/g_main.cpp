@@ -4,6 +4,7 @@
 #include "g_local.h"
 #include "bots/bot_includes.h"
 #include "q2game_api.h"
+#include "q2_modelindex_wrapper.h"
 
 
 CHECK_GCLIENT_INTEGRITY;
@@ -365,7 +366,7 @@ void InitGame()
 
 	// Custom cvars
 
-	sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_NOFLAGS);
+	sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_ARCHIVE);
 	// Third-person camera variables
 	tp_distance = gi.cvar("tp_distance", "128", CVAR_ARCHIVE);
 	tp_height   = gi.cvar("tp_height", "48", CVAR_ARCHIVE);
