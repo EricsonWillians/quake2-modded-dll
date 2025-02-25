@@ -66,27 +66,35 @@
   * @return Pointer to the newly created avatar entity
   */
  static edict_t* CreatePlayerAvatar(edict_t *ent) {
+     // Safety check
+     if (!ent || !ent->client)
+         return nullptr;
+         
      // Create a new entity for visual representation
      edict_t *avatar = G_Spawn();
+     if (!avatar)
+         return nullptr;
      
      // Configure basic properties
-     avatar->classname = "playerAvatar";   // Descriptive classname
-     avatar->owner = ent;                  // Reference to controlling entity
-     avatar->solid = SOLID_BBOX;           // Collision type
-     avatar->movetype = MOVETYPE_NONE;     // No independent movement
+     avatar->classname = "playerAvatar";
+     avatar->owner = ent;
+     avatar->solid = SOLID_BBOX;
+     avatar->movetype = MOVETYPE_STEP;
      
      // Copy collision boundaries
-     avatar->mins[0] = ent->mins[0];
-     avatar->mins[1] = ent->mins[1];
-     avatar->mins[2] = ent->mins[2];
-     
-     avatar->maxs[0] = ent->maxs[0];
-     avatar->maxs[1] = ent->maxs[1];
-     avatar->maxs[2] = ent->maxs[2];
+     avatar->mins = ent->mins;
+     avatar->maxs = ent->maxs;
      
      // Copy entity state from player
      avatar->s = ent->s;
-     avatar->s.modelindex = 255;  // Player model index
+     
+     // Use player model
+     avatar->s.modelindex = 255;
+     
+     // Set proper rotation for third-person appearance
+     avatar->s.angles[YAW] = ent->client->v_angle[YAW];
+     avatar->s.angles[PITCH] = 0;
+     avatar->s.angles[ROLL] = 0;
      
      // Register with the game world
      gi.linkentity(avatar);
@@ -95,35 +103,33 @@
  }
  
  /**
-  * Update the player's avatar entity to match current state
+  * Update player avatar entity
   * 
-  * This function synchronizes the avatar entity with the player's current
-  * position, animation state, and effects while adjusting angles for
-  * proper third-person appearance.
-  * 
-  * @param ent Player entity
+  * This is a simpler approach that just copies the player entity state
+  * and adjusts only what's necessary for the avatar to work as a visual representation.
   */
  static void UpdatePlayerAvatar(edict_t *ent) {
-     if (!ent->client->playerAvatar)
+     if (!ent || !ent->client || !ent->client->playerAvatar)
          return;
      
-     // Copy full entity state (animations, effects, etc.)
-     ent->client->playerAvatar->s = ent->s;
-     ent->client->playerAvatar->s.modelindex = 255;  // Ensure correct model index
+     edict_t *avatar = ent->client->playerAvatar;
      
-     // Keep reference to owner entity
-     ent->client->playerAvatar->owner = ent;
+     // Copy entity state - we want most attributes to match
+     avatar->s = ent->s;
      
-     // Apply proper rotation for third-person appearance
-     // Copy yaw (horizontal rotation) for proper facing direction
-     ent->client->playerAvatar->s.angles[YAW] = ent->client->v_angle[YAW];
+     // Ensure we keep the player model
+     avatar->s.modelindex = 255;
      
-     // Reset pitch and roll for natural appearance
-     ent->client->playerAvatar->s.angles[PITCH] = 0;
-     ent->client->playerAvatar->s.angles[ROLL] = 0;
+     // Use player's animation frame
+     avatar->s.frame = ent->s.frame;
      
-     // Update in game world
-     gi.linkentity(ent->client->playerAvatar);
+     // Set avatar angles - match player's yaw but zero pitch/roll
+     avatar->s.angles[YAW] = ent->client->v_angle[YAW];
+     avatar->s.angles[PITCH] = 0;
+     avatar->s.angles[ROLL] = 0;
+     
+     // Link to update changes
+     gi.linkentity(avatar);
  }
  
  /**
@@ -136,6 +142,9 @@
   * @return The endpoint of the aim trace
   */
  static vec3_t CalculateAimTrace(edict_t *ent) {
+     if (!ent)
+         return vec3_origin;
+         
      vec3_t forward, right, up;
      vec3_t start, end;
      trace_t tr;
@@ -160,6 +169,105 @@
  }
  
  /**
+  * Improved collision detection for third-person camera
+  * 
+  * This version provides better wall handling and prevents sky visibility issues
+  */
+ static void HandleCameraCollision(edict_t *ent, const vec3_t &playerEyePos, const vec3_t &desiredPos, vec3_t &cameraPos) {
+     if (!ent)
+         return;
+         
+     const float minCollisionDistance = 8.0f;
+     const float pullbackDistance = 8.0f;
+     
+     // Perform initial trace from player eyes to desired camera position
+     trace_t trace = gi.traceline(playerEyePos, desiredPos, ent, MASK_SOLID);
+     cameraPos = trace.endpos;
+ 
+     // If we hit something, handle the collision
+     if (trace.fraction < 1.0f) {
+         // Calculate distance between player's eye and camera position
+         vec3_t diff = cameraPos - playerEyePos;
+         float distanceToObstruction = diff.length();
+         
+         // If camera is too close to player, reset to eye position
+         if (distanceToObstruction < minCollisionDistance) {
+             cameraPos = playerEyePos;
+         } else {
+             // Pull camera away from collision surface to avoid clipping
+             cameraPos = cameraPos + (trace.plane.normal * pullbackDistance);
+         }
+     }
+ 
+     // --- Sky Detection and Prevention ---
+     // Check if camera would see the sky by tracing from camera in the forward direction
+     vec3_t skyCheckDir = playerEyePos - cameraPos;
+     
+     // Normalize direction
+     float dirLength = skyCheckDir.length();
+ 
+     if (dirLength > 0.0f) {
+         skyCheckDir = skyCheckDir * (1.0f / dirLength); // Normalize
+         
+         // Calculate end point for sky check
+         const float skyCheckDist = 64.0f;
+         vec3_t skyCheckEnd = cameraPos - (skyCheckDir * skyCheckDist);
+         
+         // Trace to check for sky
+         trace_t skyTrace = gi.traceline(cameraPos, skyCheckEnd, ent, MASK_SOLID);
+         
+         // If we hit sky, move camera closer to player
+         if (skyTrace.surface && (skyTrace.surface->flags & SURF_SKY)) {
+             // Move camera 60% closer to player to avoid sky visibility
+             const float skyAvoidanceFactor = 0.6f;
+             vec3_t moveDir = playerEyePos - cameraPos;
+             
+             cameraPos = cameraPos + (moveDir * skyAvoidanceFactor);
+             
+             // Do another collision check after adjustment
+             trace = gi.traceline(playerEyePos, cameraPos, ent, MASK_SOLID);
+             if (trace.fraction < 1.0f) {
+                 cameraPos = trace.endpos;
+                 
+                 // Apply pullback again
+                 cameraPos = cameraPos + (trace.plane.normal * pullbackDistance);
+             }
+         }
+     }
+     
+     // Additional step: Check for walls nearby in multiple directions to prevent clipping
+     const int numProbes = 8;
+     const float probeRadius = 12.0f;
+     int wallHits = 0;
+     vec3_t probeOffset;
+     vec3_t probeEnd;
+     vec3_t netAdjustment = {0, 0, 0};
+     
+     // Probe around the camera in a circle to detect nearby walls
+     for (int i = 0; i < numProbes; i++) {
+         float angle = (float)i / numProbes * PI * 2.0f;
+         probeOffset.x = cos(angle) * probeRadius;
+         probeOffset.y = sin(angle) * probeRadius;
+         probeOffset.z = 0;
+         
+         probeEnd = cameraPos + probeOffset;
+         
+         trace_t probeTrace = gi.traceline(cameraPos, probeEnd, ent, MASK_SOLID);
+         if (probeTrace.fraction < 1.0f) {
+             // Hit a wall, calculate adjustment
+             netAdjustment = netAdjustment + (probeTrace.plane.normal * (1.0f - probeTrace.fraction));
+             wallHits++;
+         }
+     }
+     
+     // Apply adjustment if walls were detected
+     if (wallHits > 0) {
+         netAdjustment = netAdjustment * (pullbackDistance / wallHits);
+         cameraPos = cameraPos + netAdjustment;
+     }
+ }
+ 
+ /**
   * Main third-person view implementation
   * 
   * Manages camera positioning, player model visibility, and aiming in third-person view.
@@ -178,6 +286,8 @@
      // --- Create playerAvatar entity if it doesn't exist ---
      if (!ent->client->playerAvatar) {
          ent->client->playerAvatar = CreatePlayerAvatar(ent);
+         if (!ent->client->playerAvatar)
+             return;
      }
      
      // --- Update playerAvatar with current player state ---
@@ -195,7 +305,6 @@
      const float heightOffset = (tp_height ? tp_height->value : 0.0f);
      const float sideOffset = (tp_side ? tp_side->value : 0.0f);
      const float smoothFactor = (tp_smooth ? tp_smooth->value : 0.5f);
-     const float minCollisionDistance = 8.0f;
      const float maxDistance = 512.0f;
  
      const float effective_distance = std::clamp(distance, 16.0f, maxDistance);
@@ -212,40 +321,15 @@
  
      // --- Determine Desired Camera Position ---
      vec3_t desiredPos;
-     desiredPos.x = playerEyePos.x - (forward.x * effective_distance) + (right.x * effective_side);
-     desiredPos.y = playerEyePos.y - (forward.y * effective_distance) + (right.y * effective_side);
-     desiredPos.z = playerEyePos.z - (forward.z * effective_distance) + effective_height;
+     desiredPos = playerEyePos - (forward * effective_distance) + (right * effective_side);
+     desiredPos.z += effective_height;
  
-     // --- Collision Detection ---
-     // Prevent camera from going through walls and other solid objects
-     trace_t trace = gi.traceline(playerEyePos, desiredPos, ent, MASK_SOLID);
-     vec3_t cameraPos = trace.endpos;
- 
-     if (trace.fraction < 1.0f) {
-         // Compute distance between player's eye and camera position
-         float obstructionDist = std::sqrt(
-             (cameraPos.x - playerEyePos.x) * (cameraPos.x - playerEyePos.x) +
-             (cameraPos.y - playerEyePos.y) * (cameraPos.y - playerEyePos.y) +
-             (cameraPos.z - playerEyePos.z) * (cameraPos.z - playerEyePos.z)
-         );
- 
-         if (obstructionDist < minCollisionDistance) {
-             // Prevent camera from clipping too close
-             cameraPos = playerEyePos;
-         } else {
-             // Pull camera away from collision surface to avoid clipping
-             const float pullbackDistance = 2.0f;
-             cameraPos.x += trace.plane.normal.x * pullbackDistance;
-             cameraPos.y += trace.plane.normal.y * pullbackDistance;
-             cameraPos.z += trace.plane.normal.z * pullbackDistance;
-         }
-     }
+     // --- Improved Collision Detection ---
+     vec3_t cameraPos;
+     HandleCameraCollision(ent, playerEyePos, desiredPos, cameraPos);
  
      // --- Compute New View Offset ---
-     vec3_t targetViewOffset;
-     targetViewOffset.x = cameraPos.x - ent->s.origin.x;
-     targetViewOffset.y = cameraPos.y - ent->s.origin.y;
-     targetViewOffset.z = cameraPos.z - ent->s.origin.z;
+     vec3_t targetViewOffset = cameraPos - ent->s.origin;
  
      // Smooth the view offset transition
      ent->client->ps.viewoffset = LerpVec(ent->client->ps.viewoffset, targetViewOffset, effective_smooth);
@@ -263,6 +347,20 @@
  
      // --- Final: Revert Movement Type to Normal ---
      ent->client->ps.pmove.pm_type = PM_NORMAL;
+ }
+ 
+ /**
+  * Initialize third-person view CVARs
+  * 
+  * Called during game initialization to set up CVARs for third-person view
+  */
+ void G_InitThirdPerson(void) {
+     // Create CVARs for third-person view
+     sv_thirdperson = gi.cvar("sv_thirdperson", "0", CVAR_ARCHIVE);
+     tp_distance = gi.cvar("tp_distance", "64", CVAR_ARCHIVE);
+     tp_height = gi.cvar("tp_height", "0", CVAR_ARCHIVE);
+     tp_side = gi.cvar("tp_side", "0", CVAR_ARCHIVE);
+     tp_smooth = gi.cvar("tp_smooth", "0.5", CVAR_ARCHIVE);
  }
  
  /**
@@ -292,30 +390,28 @@
      }
  }
  
-/**
- * Command handler for toggling third-person view
- *
- * Allows players to switch between first-person and third-person views via console command.
- * 
- * @param ent Player entity that issued the command
- */
-void G_Thirdperson_Command(edict_t* ent) {
-    // Sanity checks
-    if (!ent || !ent->client)
-        return;
-        
-    // Toggle third-person view
-    if (sv_thirdperson->integer) {
-        // Disable third-person
-        gi.cvar_set("sv_thirdperson", "0");
-        G_RemoveThirdPersonView(ent);
-        // gi.cprintf(ent, PRINT_HIGH, "Third-person view disabled\n");
-    } else {
-        // Enable third-person
-        gi.cvar_set("sv_thirdperson", "1");
-        // gi.cprintf(ent, PRINT_HIGH, "Third-person view enabled\n");
-    }
-}
+ /**
+  * Command handler for toggling third-person view
+  *
+  * Allows players to switch between first-person and third-person views via console command.
+  * 
+  * @param ent Player entity that issued the command
+  */
+ void G_Thirdperson_Command(edict_t* ent) {
+     // Sanity checks
+     if (!ent || !ent->client)
+         return;
+         
+     // Toggle third-person view
+     if (sv_thirdperson->integer) {
+         // Disable third-person
+         gi.cvar_set("sv_thirdperson", "0");
+         G_RemoveThirdPersonView(ent);
+     } else {
+         // Enable third-person
+         gi.cvar_set("sv_thirdperson", "1");
+     }
+ }
  
  /**
   * Adjust weapon firing direction for third-person
@@ -345,5 +441,20 @@ void G_Thirdperson_Command(edict_t* ent) {
          aimdir.x = dir.x / length;
          aimdir.y = dir.y / length;
          aimdir.z = dir.z / length;
+     }
+ }
+ 
+ /**
+  * Clean up third-person view when level changes
+  * 
+  * Should be called during level changes to ensure clean state
+  */
+ void G_ShutdownThirdPerson(void) {
+     // Clean up any active third-person views
+     for (int i = 0; i < game.maxclients; i++) {
+         edict_t *ent = g_edicts + 1 + i;
+         if (ent->inuse && ent->client && ent->client->playerAvatar) {
+             G_RemoveThirdPersonView(ent);
+         }
      }
  }
